@@ -1,0 +1,118 @@
+<html>
+  <body>
+      <script src="https://cdn.rawgit.com/aws/amazon-cognito-identity-js/master/dist/aws-cognito-sdk.min.js"></script>
+      <script src="https://cdn.rawgit.com/aws/amazon-cognito-identity-js/master/dist/amazon-cognito-identity.min.js"></script>
+      <script src="https://sdk.amazonaws.com/js/aws-sdk-2.156.0.min.js"></script>
+      <script type="text/javascript" src="lib/axios/dist/axios.standalone.js"></script>
+      <script type="text/javascript" src="lib/CryptoJS/rollups/hmac-sha256.js"></script>
+      <script type="text/javascript" src="lib/CryptoJS/rollups/sha256.js"></script>
+      <script type="text/javascript" src="lib/CryptoJS/components/hmac.js"></script>
+      <script type="text/javascript" src="lib/CryptoJS/components/enc-base64.js"></script>
+      <script type="text/javascript" src="lib/url-template/url-template.js"></script>
+      <script type="text/javascript" src="lib/apiGatewayCore/sigV4Client.js"></script>
+      <script type="text/javascript" src="lib/apiGatewayCore/apiGatewayClient.js"></script>
+      <script type="text/javascript" src="lib/apiGatewayCore/simpleHttpClient.js"></script>
+      <script type="text/javascript" src="lib/apiGatewayCore/utils.js"></script>
+      <script type="text/javascript" src="apigClient.js"></script>
+  
+    <h1>Test the endpoint</h1>
+    <div id="app">
+      <form id="cool_form" onsubmit="return processForm();">
+        <input id="usernameInput" type="text" placeholder="User" />
+        <input id="passwordInput" type="password" placeholder="Password"/>
+        <input type="submit"/>
+      </form>
+    </div>
+    <script>
+        function processForm(){
+          
+          AWSCognito.config.region = 'us-west-2';
+            // set region if not set (as not set by the SDK by default)
+            if (!AWS.config.region) {
+                AWS.config.update({
+                    region: 'us-west-2'
+                });
+            }
+          var poolData = {
+              UserPoolId : 'us-west-2_E1i57PuDf', // your user pool id here
+              ClientId : '69pkdd67bnvko38n9fgftrdt15' // your app client id here
+          };
+          var userPool = new AWSCognito.CognitoIdentityServiceProvider.CognitoUserPool(poolData);
+
+          var authenticationData = {
+                  Username : document.getElementById("usernameInput").value, // your username here
+                  Password : document.getElementById("passwordInput").value, // your password here
+              };
+          var authenticationDetails = new AWSCognito.CognitoIdentityServiceProvider.AuthenticationDetails(authenticationData);
+          var userData = {
+              Username : document.getElementById("usernameInput").value, // your username here
+              Pool : userPool
+          };
+
+          var cognitoUser = new AWSCognito.CognitoIdentityServiceProvider.CognitoUser(userData);
+              cognitoUser.authenticateUser(authenticationDetails, {
+                  onSuccess: function (result) {
+                      console.log('access token + ' + result.getAccessToken().getJwtToken());
+                      AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+                          IdentityPoolId: 'us-west-2:28fe9aee-83c7-42a9-8129-325ccd5fd10c',
+                          Logins: {
+                              'cognito-idp.us-west-2.amazonaws.com/us-west-2_E1i57PuDf': 
+                      result.getIdToken().getJwtToken()
+                          }
+                      });
+                      
+                      AWS.config.credentials.get(function(err){
+                          if (err) {
+                              alert(err);
+                          }
+                      });
+                  },
+          
+                  onFailure: function(err) {
+                      alert(err);
+                  },
+                  mfaRequired: function(codeDeliveryDetails) {
+                      var verificationCode = prompt('Please input verification code' ,'');
+                      cognitoUser.sendMFACode(verificationCode, this);
+                  }
+              });
+
+
+          var config = {invokeUrl:'https://tzvlx7065k.execute-api.us-west-2.amazonaws.com'};
+          var apigClient = apigClientFactory.newClient(config);
+          var params = {
+              //This is where any header, path, or querystring request params go. The key is the parameter named as defined in the API
+              //userId: '1234',
+          };
+
+          var additionalParams = {
+              //If there are any unmodeled query parameters or headers that need to be sent with the request you can add them here
+              /*
+              headers: {
+                  param0: '',
+                  param1: ''
+              },
+              queryParams: {
+                  param0: '',
+                  param1: ''
+              }
+              */
+          };
+          var body = {
+              //This is where you define the body of the request
+          };
+
+          apigClient.tttGet(params, body, additionalParams)
+              .then(function(result){
+                  console.log(result);
+                  alert(result);
+              }).catch( function(result){
+                  console.log(result);
+                  alert(result);
+              });
+
+          return false;
+        }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "smb_lambda_02",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read S3 object and test access to RDS",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Lorenzo Pini",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "7.4.1",
+	"node-stream-zip": "1.4.2"
+  }
+}
