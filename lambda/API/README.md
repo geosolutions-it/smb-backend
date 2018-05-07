@@ -1,8 +1,6 @@
-curl -v -d "{\"name\": \"bikename\",\"status\":1}" -H "Content-Type:application/json" http://localhost:5000/vehicles
+curl -v -d "{\"name\": \"bikename\",\"status\":1}" -H "Content-Type:application/json" http://localhost:5000/v1.0/vehicles
 
 ### Deploy with Zappa
-
-cd SaveMyBike_API
 
 cd src
 
