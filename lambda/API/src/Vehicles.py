@@ -97,11 +97,12 @@ class VehiclesList(Resource):
         cur.close()
         
         return id_of_new_row, 201
+    
 
 # Vehicle
 # shows a single Vehicle item and lets you delete a Vehicle item
 class Vehicle(Resource):
-    def get(self, vehicle_id):
+    def get(self, vehicle_id, user_id=None):
         
         try:
             int(vehicle_id)
@@ -128,7 +129,7 @@ class Vehicle(Resource):
         cur.close()
         return jsonify(result)
 
-    def delete(self, vehicle_id):
+    def delete(self, vehicle_id, user_id=None):
         conn = get_db()
         cur = conn.cursor()
         
@@ -140,7 +141,7 @@ class Vehicle(Resource):
         cur.close()
         return '', 204
 
-    def post(self, vehicle_id):
+    def post(self, vehicle_id, user_id=None):
         content = request.json #: :type content: dict
         print(content)
         
@@ -191,72 +192,6 @@ class Vehicle(Resource):
         return id_of_new_row, 201
 
 
-# TagsList
-# shows a list of all the tags associated with a specific Vehicle, and lets you POST to add new vehicles
-class TagsList(Resource):
-    def get(self, vehicle_id):
-        
-        try:
-            int(vehicle_id)
-        except ValueError: 
-            return None # the input is not an integer
-        
-        args = searchParser.parse_args()
-
-        conn = get_db()
-        cur = conn.cursor()
-        SQL = "SELECT epc FROM tags where vehicle_id = %s order by epc limit 50;" 
-        data = (vehicle_id,) # keep the comma to make it a tuple
-        cur.execute(SQL, data) 
-        # row = cur.fetchone()
-        rows = cur.fetchall()
-        if rows == None:
-            print("There are no results for this query")
-            rows = []
-        
-        columns = [desc[0] for desc in cur.description]
-        result = []
-        for row in rows:
-            row = dict(zip(columns, row))
-            result.append(row)
-
-        conn.commit()
-        cur.close()
-        return jsonify(result)
-
-    def post(self, vehicle_id):
-        content = request.json
-        print(content)
-        
-        _id = content.get('epc', 1)
-                
-        conn = get_db()
-        cur = conn.cursor()
-        
-        SQL = "INSERT INTO tags (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
-        data = (_id, vehicle_id )
-        id_of_new_row = None
-        error_message = ""        
-        
-        try:
-            cur.execute(SQL, data) 
-        except Exception as e:
-            print(e)
-            if hasattr(e, 'diag') and hasattr(e.diag, 'message_detail') :
-                error_message = e.diag.message_detail
-            else :
-                error_message = "Database error" 
-            conn.rollback()
-        else:
-            conn.commit()
-            id_of_new_row = cur.fetchone()[0]        
-        
-        cur.close()
-        
-        # TODO : 409 Conflict if tagId already exists
-        if id_of_new_row is None : return {"Error" : error_message}, 404
-        
-        return id_of_new_row, 201
 
 
 # UserVehiclesList
