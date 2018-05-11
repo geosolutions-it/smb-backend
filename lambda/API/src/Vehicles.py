@@ -134,7 +134,7 @@ class Vehicle(Resource):
         cur = conn.cursor()
         
         SQL = "DELETE FROM vehicles WHERE id = %s;" 
-        data = (vehicle_id )
+        data = (vehicle_id, )
         cur.execute(SQL, data) 
         
         conn.commit()
@@ -190,7 +190,6 @@ class Vehicle(Resource):
         cur.close()
         
         return id_of_new_row, 201
-
 
 
 
