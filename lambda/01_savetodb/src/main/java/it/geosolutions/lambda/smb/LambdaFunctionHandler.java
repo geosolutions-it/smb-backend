@@ -38,7 +38,7 @@ public class LambdaFunctionHandler implements RequestHandler<SNSEvent, String> {
 		if(s3_key == null || s3_key.isEmpty()) {
 			return null;
 		}
-		Pattern pattern = Pattern.compile("cognito/smb/([\\w]+)/(.*)");
+		Pattern pattern = Pattern.compile("cognito/smb/([\\w-]+)/(.*)");
 		Matcher matcher = pattern.matcher(s3_key);
 		if (matcher.find())
 		{
