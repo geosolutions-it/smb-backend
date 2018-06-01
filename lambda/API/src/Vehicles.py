@@ -4,7 +4,7 @@ Created on 13 apr 2018
 @author: gnafu
 '''
 
-from flask import jsonify, request
+from flask import jsonify, request, json
 from flask_restful import reqparse, Resource
 
 from Database import get_db
@@ -48,10 +48,10 @@ class VehiclesList(Resource):
             
         
         if tagId is not None:
-            SQL="SELECT v.* FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
+            SQL="SELECT v.id, v.lastupdate, v.type, v.name, v.status, v.lastposition, v.image, v.owner FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
             data = (tagId,)
         else :            
-            SQL="SELECT * FROM vehicles order by id limit %s offset %s;"
+            SQL="SELECT id, lastupdate, type, name, status, lastposition, image, owner FROM vehicles order by id limit %s offset %s;"
             data = (per_page, offset)
             
         conn = get_db()
@@ -67,6 +67,10 @@ class VehiclesList(Resource):
         result = []
         for row in rows:
             row = dict(zip(columns, row))
+            # print(json.dumps(row))
+            # row['id'] = row['_id']
+            # del row['_id']
+            print(json.dumps(row))
             result.append(row)
 
         conn.commit()
@@ -103,7 +107,7 @@ class VehiclesList(Resource):
 # shows a single Vehicle item and lets you delete a Vehicle item
 class Vehicle(Resource):
     def get(self, vehicle_id, user_id=None):
-        
+
         try:
             int(vehicle_id)
         except ValueError: 
@@ -111,10 +115,18 @@ class Vehicle(Resource):
         
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT * FROM vehicles where id = %s limit 1;" 
-        data = (vehicle_id,) # keep the comma to make it a tuple
-        cur.execute(SQL, data) 
+        SQL = "SELECT v.*, ST_AsGeoJSON(d.the_geom) as last_position FROM vehicles v LEFT JOIN datapoints d on d.vehicle_id = v._id where v.id = %s order by d.timestamp desc limit 1;" 
+        data = (vehicle_id,) # using vehicle_id twice
+        
+        try:
+            cur.execute(SQL, data)
+        except Exception as error: 
+            print(error)
+            return jsonify([])
+        
+        
         rows = cur.fetchall()
+        print(rows)
         if rows == None:
             print("There are no results for this query")
             rows = []
@@ -123,6 +135,16 @@ class Vehicle(Resource):
         result = []
         for row in rows:
             row = dict(zip(columns, row))
+            print(json.dumps(row))
+            # row['id'] = row['_id']
+            del row['_id']
+            print(json.dumps(row))
+            
+            if row['last_position'] != None :
+                row['lastposition']=json.loads(row['last_position'])
+            del row['last_position']
+            print(json.dumps(row))
+            
             result.append(row)
 
         conn.commit()
