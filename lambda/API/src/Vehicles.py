@@ -51,7 +51,26 @@ class VehiclesList(Resource):
             SQL="SELECT v.id, v.lastupdate, v.type, v.name, v.status, v.lastposition, v.image, v.owner FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
             data = (tagId,)
         else :            
-            SQL="SELECT id, lastupdate, type, name, status, lastposition, image, owner FROM vehicles order by id limit %s offset %s;"
+            #SQL="SELECT id, lastupdate, type, name, status, lastposition, image, owner FROM vehicles order by id limit %s offset %s;"
+            SQL = """Select v.id, v.lastupdate, v.type, v.name, v.status, v.image, v.owner, 
+                        CASE WHEN ll.lastpos IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         ll.gid,
+                                'geometry',   ST_AsGeoJSON(ll.lastpos)::jsonb,
+                                'properties', CASE WHEN ll.reporter IS NOT NULL THEN to_jsonb(ll.reporter) ELSE '{}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        from vehicles as v left join 
+                        (
+                        SELECT d1.vehicle_id, d1.the_geom as lastpos, d1._id as gid, d1.reporter
+                        FROM datapoints d1
+                        LEFT JOIN datapoints d2 ON d1.vehicle_id = d2.vehicle_id AND coalesce(d1.timestamp, 0) < d2.timestamp
+                        WHERE d2.timestamp IS NULL
+                        ) as ll
+                         on v._id = ll.vehicle_id
+                 order by id limit %s offset %s;"""
             data = (per_page, offset)
             
         conn = get_db()
@@ -92,10 +111,12 @@ class VehiclesList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO vehicles (type, name, status, lastposition, image, owner) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;" 
-        data = (_type, name, status, lastposition, image, owner )
+        SQL = "INSERT INTO vehicles (type, name, status, image, owner) VALUES (%s, %s, %s, %s, %s) RETURNING id;" 
+        data = (_type, name, status, image, owner )
         cur.execute(SQL, data) 
         id_of_new_row = cur.fetchone()[0]        
+        
+        # TODO: insert lastposition in the datapoints table
         
         conn.commit()
         cur.close()
@@ -115,15 +136,33 @@ class Vehicle(Resource):
         
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT v.*, ST_AsGeoJSON(d.the_geom) as last_position FROM vehicles v LEFT JOIN datapoints d on d.vehicle_id = v._id where v.id = %s order by d.timestamp desc limit 1;" 
-        data = (vehicle_id,) # using vehicle_id twice
+        #SQL = "SELECT v.*, ST_AsGeoJSON(d.the_geom) as last_position FROM vehicles v LEFT JOIN datapoints d on d.vehicle_id = v._id where v.id = %s order by d.timestamp desc limit 1;" 
+        SQL = """Select v.id, v.lastupdate, v.type, v.name, v.status, v.image, v.owner, 
+                        CASE WHEN ll.lastpos IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         ll.gid,
+                                'geometry',   ST_AsGeoJSON(ll.lastpos)::jsonb,
+                                'properties', CASE WHEN ll.reporter IS NOT NULL THEN to_jsonb(ll.reporter) ELSE '{}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        from vehicles as v left join 
+                        (
+                        SELECT d1.vehicle_id, d1.the_geom as lastpos, d1._id as gid, d1.reporter
+                        FROM datapoints d1
+                        LEFT JOIN datapoints d2 ON d1.vehicle_id = d2.vehicle_id AND coalesce(d1.timestamp, 0) < d2.timestamp
+                        WHERE d2.timestamp IS NULL
+                        ) as ll
+                         on v._id = ll.vehicle_id
+                 WHERE v.id = %s;"""
+        data = (vehicle_id,) # using vehicle id , not uuid (uuid will be used in V2.0)
         
         try:
             cur.execute(SQL, data)
         except Exception as error: 
             print(error)
             return jsonify([])
-        
         
         rows = cur.fetchall()
         print(rows)
@@ -135,14 +174,6 @@ class Vehicle(Resource):
         result = []
         for row in rows:
             row = dict(zip(columns, row))
-            print(json.dumps(row))
-            # row['id'] = row['_id']
-            del row['_id']
-            print(json.dumps(row))
-            
-            if row['last_position'] != None :
-                row['lastposition']=json.loads(row['last_position'])
-            del row['last_position']
             print(json.dumps(row))
             
             result.append(row)
@@ -165,6 +196,7 @@ class Vehicle(Resource):
 
     def post(self, vehicle_id, user_id=None):
         content = request.json #: :type content: dict
+        print(' -- content -- ')
         print(content)
         
         if content is None: return None, 304
@@ -180,6 +212,43 @@ class Vehicle(Resource):
         conn = get_db()
         cur = conn.cursor()
         
+        SQL = "Select _id from vehicles where id = %s"
+        data = (vehicle_id,)
+        cur.execute(SQL, data) 
+        
+        vehicle_uuid = cur.fetchone()[0]
+        
+        
+        # update the position
+        if lastposition is not None :
+            # parse GeoJSON
+            # position = json.loads(lastposition)
+            # print(json.dumps(lastposition))
+            print(' -- lastposition -- ')
+            print(lastposition)
+            if lastposition['type'] == 'Feature':
+                print(' -- geometry -- ')
+                print(lastposition['geometry'])
+                print(' -- coordinates -- ')
+                print(lastposition['geometry']['coordinates'])
+                lon = lastposition['geometry']['coordinates'][0]
+                lat = lastposition['geometry']['coordinates'][1]
+                
+                try:
+                    reporter = lastposition['properties']['reporter']
+                except:
+                    reporter = "N/A"
+                    
+                SQL = "INSERT INTO datapoints (vehicle_id, the_geom, reporter, timestamp) VALUES ( %s, ST_SetSRID(ST_Point(%s, %s), 4326), %s, extract(epoch FROM now())*1000 :: bigint) returning id;"
+                data = (vehicle_uuid, lon, lat, reporter)
+                
+                cur.execute(SQL, data) 
+                id_of_new_row = cur.fetchone()[0]
+                    
+                print('new datapoint row: %s' % (id_of_new_row,))
+            else:
+                return {'Error': "Please provide 'lastposition' as a valid GeoJSON point"}, 500
+        
         inputslist = []
         SQL = "UPDATE vehicles SET lastupdate = now()" 
         if 'type' in content :
@@ -191,9 +260,6 @@ class Vehicle(Resource):
         if 'status' in content :
             SQL += ', status = %s'
             inputslist.append(status)
-        if 'lastposition' in content :
-            SQL += ', lastposition = %s'
-            inputslist.append(lastposition)
         if 'image' in content :
             SQL += ', image = %s'
             inputslist.append(image)
@@ -254,7 +320,25 @@ class UserVehiclesList(Resource):
             SQL="SELECT v.* FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
             data = (tagId,)
         else :            
-            SQL="SELECT * FROM vehicles WHERE owner = %s order by id limit %s offset %s;"
+            SQL="""Select v.id, v.lastupdate, v.type, v.name, v.status, v.image, v.owner, 
+                        CASE WHEN ll.lastpos IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         ll.gid,
+                                'geometry',   ST_AsGeoJSON(ll.lastpos)::jsonb,
+                                'properties', CASE WHEN ll.reporter IS NOT NULL THEN to_jsonb(ll.reporter) ELSE '{}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        from vehicles as v left join 
+                        (
+                        SELECT d1.vehicle_id, d1.the_geom as lastpos, d1._id as gid, d1.reporter
+                        FROM datapoints d1
+                        LEFT JOIN datapoints d2 ON d1.vehicle_id = d2.vehicle_id AND coalesce(d1.timestamp, 0) < d2.timestamp
+                        WHERE d2.timestamp IS NULL
+                        ) as ll
+                         on v._id = ll.vehicle_id
+                    WHERE owner = %s order by id limit %s offset %s;"""
             data = (user_id, per_page, offset)
             
         conn = get_db()
@@ -286,7 +370,6 @@ class UserVehiclesList(Resource):
         lastposition  = content.get('lastposition', None)
         image  = content.get('image', None)
         owner  = content.get('owner', None)
-        
         
         conn = get_db()
         cur = conn.cursor()
