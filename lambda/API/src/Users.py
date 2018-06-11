@@ -7,7 +7,7 @@ Created on 13 apr 2018
 from flask import jsonify, request, json
 from flask_restful import reqparse, Resource
 
-from Database import get_db
+from Database import get_db, TABLE_NAMES, sql
 from Utility import limit_int
 
 searchParser= reqparse.RequestParser()
@@ -44,12 +44,14 @@ class UsersList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL="SELECT * FROM users order by id limit %s offset %s;"
+        SQL="SELECT * FROM {} order by id limit %s offset %s;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
         data = (per_page, offset)
 
         # if dump is true compose all users/vehicles/tags and output them
         if dump:
-            SQL="SELECT * FROM users order by id asc;"
+            SQL="SELECT * FROM {} order by id asc;"
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
             data = None
         
         
@@ -71,7 +73,8 @@ class UsersList(Resource):
             for i in result:
                 i['vehicles'] = []
                 print(json.dumps(i))
-                SQL="SELECT * FROM vehicles where owner = %s order by id asc;"
+                SQL="SELECT * FROM {} where owner = %s order by id asc;"
+                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
                 data = (i['id'],)
                 cur.execute(SQL, data)
                 vehicles = cur.fetchall()
@@ -85,7 +88,8 @@ class UsersList(Resource):
                     v['tags'] = []
                     print(json.dumps(v))
                     
-                    SQL = "SELECT epc FROM tags where vehicle_id = %s order by epc;" 
+                    SQL = "SELECT epc FROM {} where vehicle_id = %s order by epc;" 
+                    SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
                     data = (v['id'],)
                     cur.execute(SQL, data)
                     tags = cur.fetchall()
@@ -123,7 +127,8 @@ class UsersList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO users (username, email, name, given_name, family_name, preferred_username, \"cognito:user_status\", status, sub) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;" 
+        SQL = "INSERT INTO {} (username, email, name, given_name, family_name, preferred_username, \"cognito:user_status\", status, sub) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
         data = (username, email, name, given_name, family_name, preferred_username, cognito_user_status, status, sub)
         cur.execute(SQL, data) 
         id_of_new_row = cur.fetchone()[0]        
@@ -145,7 +150,8 @@ class User(Resource):
         
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT * FROM users where id = %s limit 1;" 
+        SQL = "SELECT * FROM {} where id = %s limit 1;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
         data = (user_id,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         rows = cur.fetchall()
@@ -167,8 +173,9 @@ class User(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM users WHERE id = %s;" 
-        data = (user_id )
+        SQL = "DELETE FROM {} WHERE id = %s;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
+        data = (user_id, )
         cur.execute(SQL, data) 
         
         conn.commit()
@@ -195,7 +202,7 @@ class User(Resource):
         cur = conn.cursor()
         
         inputslist = []
-        SQL = "UPDATE users SET lastupdate = now()" 
+        SQL = "UPDATE {} SET lastupdate = now()" 
         if 'username' in content :
             SQL += ', username = %s'
             inputslist.append(username)
@@ -225,6 +232,7 @@ class User(Resource):
             inputslist.append(sub)
         
         SQL += " where id = %s RETURNING id;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
         inputslist.append(user_id)
         
         data = tuple(inputslist)

@@ -7,7 +7,7 @@ Created on 09 may 2018
 from flask import jsonify, request
 from flask_restful import reqparse, Resource
 
-from Database import get_db
+from Database import get_db, TABLE_NAMES, sql
 from Utility import limit_int
 
 
@@ -32,7 +32,8 @@ class Tag(Resource):
 
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT epc FROM tags where epc = %s limit 1;" 
+        SQL = "SELECT epc FROM {} where epc = %s limit 1;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         # row = cur.fetchone()
@@ -60,7 +61,8 @@ class Tag(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO tags (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
+        SQL = "INSERT INTO {} (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        
@@ -92,7 +94,8 @@ class Tag(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM tags WHERE epc = %s RETURNING epc;" 
+        SQL = "DELETE FROM {} WHERE epc = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc, )
         
         try:
@@ -122,7 +125,8 @@ class TagsList(Resource):
 
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT epc FROM tags where vehicle_id = %s order by epc limit 50;" 
+        SQL = "SELECT epc FROM {} where vehicle_id = %s order by epc limit 50;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (vehicle_id,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         # row = cur.fetchone()
@@ -150,7 +154,8 @@ class TagsList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO tags (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
+        SQL = "INSERT INTO {} (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))      
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        
@@ -184,7 +189,8 @@ class TagsList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM tags WHERE epc = %s RETURNING epc;" 
+        SQL = "DELETE FROM {} WHERE epc = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc, )
         
         try:

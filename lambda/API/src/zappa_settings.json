@@ -1,0 +1,21 @@
+{
+    "dev": {
+        "app_function": "Main.app",
+        "aws_region": "us-west-2",
+        "profile_name": "default",
+        "project_name": "SaveMybike_API",
+        "runtime": "python3.6",
+        "s3_bucket": "savemybike-code",
+		"xray_tracing": false,
+		"keep_warm": false,
+		"vpc_config": { 
+            "SubnetIds": [ "subnet-fbbb7fa3", "subnet-8446f5f2", "subnet-c10f97a5"],
+            "SecurityGroupIds": [ "sg-f1c17d97" ]
+        },
+        "context_header_mappings":{
+        	"cognito_username": "authorizer.claims.cognito:username",
+        	"cognito_sub" : "authorizer.claims.sub",
+        	"cognito_email" : "authorizer.claims.email"
+    	}
+    }
+}
