@@ -73,8 +73,28 @@ class UsersList(Resource):
             for i in result:
                 i['vehicles'] = []
                 print(json.dumps(i))
-                SQL="SELECT * FROM {} where owner = %s order by id asc;"
-                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
+                SQL="""Select v.id, v.lastupdate, v.type, v.name, v.status, v.image, v.owner, 
+                            CASE WHEN ll.lastpos IS NOT NULL THEN
+                                jsonb_build_object(
+                                    'type',       'Feature',
+                                    'id',         ll.gid,
+                                    'geometry',   ST_AsGeoJSON(ll.lastpos)::jsonb,
+                                    'properties', CASE WHEN ll.reporter IS NOT NULL THEN  json_build_object(
+                                                                                            'reporter', ll.reporter
+                                                                                         ) ELSE '{{}}' END
+                                )
+                                ELSE NULL
+                            END as lastposition 
+                            FROM {} as v LEFT JOIN 
+                            (
+                            SELECT d1.vehicle_id, d1.the_geom as lastpos, d1._id as gid, d1.reporter
+                            FROM {} d1
+                            LEFT JOIN {} d2 ON d1.vehicle_id = d2.vehicle_id AND coalesce(d1.timestamp, 0) < d2.timestamp
+                            WHERE d2.timestamp IS NULL
+                            ) as ll
+                            on v._id = ll.vehicle_id
+                        WHERE owner = %s order by id asc;"""
+                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['datapoints']), sql.Identifier(TABLE_NAMES['datapoints']))
                 data = (i['id'],)
                 cur.execute(SQL, data)
                 vehicles = cur.fetchall()
