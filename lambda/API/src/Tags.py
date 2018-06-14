@@ -21,13 +21,6 @@ searchParser.add_argument('orderBy').add_argument('page').add_argument('per_page
 class Tag(Resource):
     def get(self, vehicle_id, tag_epc, user_id=None):
         
-        print(tag_epc)
-        
-        try:
-            int(vehicle_id)
-        except ValueError: 
-            return None # the input is not an integer
-        
         args = searchParser.parse_args()
 
         conn = get_db()
@@ -61,8 +54,8 @@ class Tag(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO {} (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
-        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
+        SQL = "INSERT INTO {} (epc, bike_id, creation_date) SELECT %s as epc, v.id as bike_id, NOW() FROM {} as v WHERE v.id = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        
@@ -116,17 +109,12 @@ class Tag(Resource):
 class TagsList(Resource):
     def get(self, vehicle_id, user_id=None):
         
-        try:
-            int(vehicle_id)
-        except ValueError: 
-            return None # the input is not an integer
-        
         args = searchParser.parse_args()
 
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT epc FROM {} where vehicle_id = %s order by epc limit 50;" 
-        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
+        SQL = "SELECT epc FROM {} t left join {} v on t.bike_id = v.id where v.id = %s order by epc limit 50;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))
         data = (vehicle_id,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         # row = cur.fetchone()
@@ -154,8 +142,8 @@ class TagsList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO {} (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;"
-        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))      
+        SQL = "INSERT INTO {} (epc, bike_id, creation_date) SELECT %s, v.id , NOW() FROM {} v WHERE v.id = %s RETURNING epc;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))      
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        

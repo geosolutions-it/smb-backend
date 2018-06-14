@@ -4,7 +4,7 @@ Created on 13 apr 2018
 @author: gnafu
 '''
 
-from flask import jsonify, request, json
+from flask import jsonify, json
 from flask_restful import reqparse, Resource
 
 from Database import get_db, TABLE_NAMES, sql
@@ -44,14 +44,14 @@ class UsersList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL="SELECT * FROM {} order by id limit %s offset %s;"
-        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
+        SQL="SELECT k.\"UID\" as id, u.username, u.first_name, u.last_name, u.email, u.is_staff, u.is_active, u.date_joined, u.nickname, u.language_preference FROM {} as u LEFT JOIN {} as k ON k.user_id = u.id order by id limit %s offset %s;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']), sql.Identifier(TABLE_NAMES['users_mapping']))
         data = (per_page, offset)
 
         # if dump is true compose all users/vehicles/tags and output them
         if dump:
-            SQL="SELECT * FROM {} order by id asc;"
-            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
+            SQL="SELECT k.\"UID\" as id, u.id as numeric_id, u.username, u.first_name, u.last_name, u.email, u.is_staff, u.is_active, u.date_joined, u.nickname, u.language_preference FROM {} as u LEFT JOIN {} as k ON k.user_id = u.id order by id asc;"
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']), sql.Identifier(TABLE_NAMES['users_mapping']))
             data = None
         
         
@@ -73,29 +73,38 @@ class UsersList(Resource):
             for i in result:
                 i['vehicles'] = []
                 print(json.dumps(i))
-                SQL="""Select v.id, v.lastupdate, v.type, v.name, v.status, v.image, v.owner, 
-                            CASE WHEN ll.lastpos IS NOT NULL THEN
-                                jsonb_build_object(
-                                    'type',       'Feature',
-                                    'id',         ll.gid,
-                                    'geometry',   ST_AsGeoJSON(ll.lastpos)::jsonb,
-                                    'properties', CASE WHEN ll.reporter IS NOT NULL THEN  json_build_object(
-                                                                                            'reporter', ll.reporter
-                                                                                         ) ELSE '{{}}' END
-                                )
-                                ELSE NULL
-                            END as lastposition 
-                            FROM {} as v LEFT JOIN 
-                            (
-                            SELECT d1.vehicle_id, d1.the_geom as lastpos, d1._id as gid, d1.reporter
-                            FROM {} d1
-                            LEFT JOIN {} d2 ON d1.vehicle_id = d2.vehicle_id AND coalesce(d1.timestamp, 0) < d2.timestamp
-                            WHERE d2.timestamp IS NULL
-                            ) as ll
-                            on v._id = ll.vehicle_id
-                        WHERE owner = %s order by id asc;"""
-                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['datapoints']), sql.Identifier(TABLE_NAMES['datapoints']))
-                data = (i['id'],)
+                SQL="""Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, v.owner_id as owner, 
+                        CASE WHEN vp.position IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         vp.id,
+                                'geometry',   ST_AsGeoJSON(vp.position)::jsonb,
+                                'properties', CASE WHEN vp.reporter_id IS NOT NULL THEN  json_build_object(
+                                                                                        'reporter_id', vp.reporter_id
+                                                                                     ) ELSE '{{}}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        FROM {} as v 
+                        LEFT JOIN 
+                        (
+                            SELECT vs1.bike_id, vs1.lost
+                            FROM vehicles_bikestatus vs1
+                            LEFT JOIN vehicles_bikestatus vs2 ON vs1.bike_id = vs2.bike_id AND vs1.creation_date < vs2.creation_date
+                            WHERE vs2.creation_date IS NULL
+                        ) as vs
+                        ON vs.bike_id = v.id
+                        LEFT JOIN 
+                        (
+                            SELECT vp1.id, vp1.bike_id, vp1.position, vp1.reporter_id
+                            FROM {} vp1
+                            LEFT JOIN {} vp2 ON vp1.bike_id = vp2.bike_id AND vp1.observed_at < vp2.observed_at
+                            WHERE vp2.observed_at IS NULL
+                        ) as vp
+                        ON vp.bike_id = v.id
+                        WHERE owner_id = %s order by id asc;"""
+                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
+                data = (i['numeric_id'],)
                 cur.execute(SQL, data)
                 vehicles = cur.fetchall()
                 if vehicles == None:
@@ -108,7 +117,7 @@ class UsersList(Resource):
                     v['tags'] = []
                     print(json.dumps(v))
                     
-                    SQL = "SELECT epc FROM {} where vehicle_id = %s order by epc;" 
+                    SQL = "SELECT epc FROM {} where bike_id = %s order by epc;" 
                     SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
                     data = (v['id'],)
                     cur.execute(SQL, data)
@@ -124,12 +133,12 @@ class UsersList(Resource):
                         v['tags'].append(t)
                     
                     i['vehicles'].append(v)
-
+                del i['numeric_id']
 
         conn.commit()
         cur.close()
         return jsonify(result)
-
+'''
     def post(self):
         content = request.json
         print(content)
@@ -157,21 +166,17 @@ class UsersList(Resource):
         cur.close()
         
         return id_of_new_row, 201
+'''
 
 # User
 # shows a single User item and lets you delete a User item
 class User(Resource):
     def get(self, user_id):
-        
-        try:
-            int(user_id)
-        except ValueError: 
-            return None # the input is not an integer
-        
+              
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT * FROM {} where id = %s limit 1;" 
-        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']))
+        SQL = "SELECT k.\"UID\" as id, u.username, u.first_name, u.last_name, u.email, u.is_staff, u.is_active, u.date_joined, u.nickname, u.language_preference FROM {} as u LEFT JOIN {} as k ON k.user_id = u.id where k.\"UID\" = %s limit 1;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['users']), sql.Identifier(TABLE_NAMES['users_mapping']))
         data = (user_id,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         rows = cur.fetchall()
@@ -188,7 +193,7 @@ class User(Resource):
         conn.commit()
         cur.close()
         return jsonify(result)
-
+'''
     def delete(self, user_id):
         conn = get_db()
         cur = conn.cursor()
@@ -263,3 +268,4 @@ class User(Resource):
         cur.close()
         
         return id_of_new_row, 201
+'''

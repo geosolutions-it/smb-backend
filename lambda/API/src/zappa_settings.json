@@ -9,8 +9,8 @@
 		"xray_tracing": false,
 		"keep_warm": false,
 		"vpc_config": { 
-            "SubnetIds": [ "subnet-fbbb7fa3", "subnet-8446f5f2", "subnet-c10f97a5"],
-            "SecurityGroupIds": [ "sg-f1c17d97" ]
+            "SubnetIds": [ "subnet-de18a595", "subnet-014edd78", "subnet-2a47d453"],
+            "SecurityGroupIds": [ "sg-0d9f637c", "sg-be8579cf"]
         },
         "context_header_mappings":{
         	"cognito_username": "authorizer.claims.cognito:username",

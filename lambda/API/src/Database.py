@@ -21,10 +21,12 @@ def get_db():
 
 
 TABLE_NAMES = {
-    'datapoints': 'datapoints',
-    'users': 'users',
-    'vehicles': 'vehicles',
-    'tags': 'tags'
+    'datapoints': 'tracks_collectedpoint',
+    'users': 'profiles_smbuser',
+    'vehicles': 'vehicles_bike',
+    'tags': 'vehicles_physicaltag',
+    'vehiclemonitor_bikeobservation': 'vehiclemonitor_bikeobservation',
+    'users_mapping': 'bossoidc_keycloak'
 }
 
 sql = sql
