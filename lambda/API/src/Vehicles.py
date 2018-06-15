@@ -261,13 +261,17 @@ class Vehicle(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "Select id from {} where id = %s"
+        SQL = "Select id from {} where id::text = %s"
         SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
         data = ( vehicle_id,)
         cur.execute(SQL, data) 
         
-        vehicle_uuid = cur.fetchone()[0]
+        query_results = cur.fetchone()
         
+        if query_results is None:
+            return {"Error":"Cannot find vehicle"}, 500
+        
+        vehicle_uuid = query_results[0]
         
         # update the position
         if lastposition is not None :
@@ -287,7 +291,8 @@ class Vehicle(Resource):
                 try:
                     reporter = lastposition['properties']['reporter']
                 except:
-                    reporter = "N/A"
+                    #TODO use the id of the actual user using this API
+                    reporter = 1
                     
                 SQL = "INSERT INTO {} (bike_id, position, reporter_id, created_at, observed_at, details, address) VALUES ( %s, ST_SetSRID(ST_Point(%s, %s), 4326), %s, now(), now(), '', '') returning id;"
                 SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
