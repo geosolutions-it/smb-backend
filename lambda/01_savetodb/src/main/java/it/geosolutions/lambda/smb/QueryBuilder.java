@@ -65,7 +65,7 @@ public class QueryBuilder {
 			//Clear the buffer
 			sb.setLength(0);
 			
-			sb.append("INSERT INTO datapoints (");
+			sb.append("INSERT INTO ").append(DatabaseConfig.getTableName("datapoints")).append(" (");
 			for (int i = 0; i < headers.length; i++) {
 				
 				// context.getLogger().log(headers[i] + " : "+ values[i]);
