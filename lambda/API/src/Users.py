@@ -114,8 +114,10 @@ class UsersList(Resource):
                 v_columns = [desc[0] for desc in cur.description]
                 for v in vehicles:
                     v = dict(zip(v_columns, v))
+                    
+                    #Fill the tags
                     v['tags'] = []
-                    print(json.dumps(v))
+                    #print(json.dumps(v))
                     
                     SQL = "SELECT epc FROM {} where bike_id = %s order by epc;" 
                     SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
@@ -131,6 +133,25 @@ class UsersList(Resource):
                         t = dict(zip(t_columns, t))
                         print(json.dumps(t))
                         v['tags'].append(t)
+                    
+                    #Fill the images
+                    v['images'] = []
+                    print(json.dumps(v))
+                    
+                    SQL = "SELECT concat('https://dev.savemybike.geo-solutions.it/media/', image) url FROM public.photologue_photo pp LEFT JOIN public.photologue_gallery_photos pgp on pp.id = pgp.photo_id where pgp.gallery_id = %s" 
+                    data = (v['picture_gallery_id'],)
+                    cur.execute(SQL, data)
+                    images = cur.fetchall()
+                    if images == None:
+                        print("There are no images for this vehicles")
+                        images = []
+                    
+                    #t_columns = [desc[0] for desc in cur.description]
+                    for img in images:
+                        #t = dict(zip(t_columns, t))
+                        print(json.dumps(img))
+                        v['images'].append(img[0])
+                    
                     
                     i['vehicles'].append(v)
                 del i['numeric_id']
