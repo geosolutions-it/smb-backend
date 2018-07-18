@@ -289,14 +289,26 @@ class Vehicle(Resource):
                 lat = lastposition['geometry']['coordinates'][1]
                 
                 try:
-                    reporter = lastposition['properties']['reporter']
+                    reporter_id = lastposition['properties']['reporter_id']
                 except:
                     #TODO use the id of the actual user using this API
-                    reporter = 1
+                    reporter_id = 1
                     
-                SQL = "INSERT INTO {} (bike_id, position, reporter_id, created_at, observed_at, details, address) VALUES ( %s, ST_SetSRID(ST_Point(%s, %s), 4326), %s, now(), now(), '', '') returning id;"
+                try:
+                    reporter_name = lastposition['properties']['reporter_name']
+                except:
+                    #TODO use the id of the actual user using this API
+                    reporter_name = 1
+                
+                try:
+                    reporter_type = lastposition['properties']['reporter_type']
+                except:
+                    #TODO use the id of the actual user using this API
+                    reporter_type = 1
+                    
+                SQL = "INSERT INTO {} (bike_id, position, reporter_id, reporter_name, reporter_type, created_at, observed_at, details, address) VALUES ( %s, ST_SetSRID(ST_Point(%s, %s), 4326), %s, %s, %s, now(), now(), '', '') returning id;"
                 SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
-                data = (vehicle_uuid, lon, lat, reporter)
+                data = (vehicle_uuid, lon, lat, reporter_id, reporter_name, reporter_type)
                 
                 cur.execute(SQL, data) 
                 id_of_new_row = cur.fetchone()[0]
@@ -370,7 +382,7 @@ class UserVehiclesList(Resource):
             SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['tags']))
             data = (tagId,)
         else :
-            SQL="""Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, v.owner_id as owner, 
+            SQL="""Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, k.kuid as owner, 
                         CASE WHEN vp.position IS NOT NULL THEN
                             jsonb_build_object(
                                 'type',       'Feature',
@@ -399,8 +411,14 @@ class UserVehiclesList(Resource):
                             WHERE vp2.observed_at IS NULL
                         ) as vp
                         ON vp.bike_id = v.id
-                    WHERE owner_id = %s order by id limit %s offset %s;"""
-            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
+                        LEFT JOIN
+                        (
+                            SELECT \"UID\" as kuid, user_id as portal_id
+                            FROM {} as u
+                        ) as k
+                        ON k.portal_id = v.owner_id
+                    WHERE k.kuid = %s order by k.kuid limit %s offset %s;"""
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['users_mapping']))
             data = (user_id, per_page, offset)
             
         conn = get_db()

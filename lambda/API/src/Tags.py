@@ -16,7 +16,7 @@ from Utility import limit_int
 searchParser= reqparse.RequestParser()
 searchParser.add_argument('orderBy').add_argument('page').add_argument('per_page').add_argument('tagId')
 
-# TagsList
+# Tags
 # shows a list of all the tags associated with a specific Vehicle, and lets you POST to add new vehicles
 class Tag(Resource):
     def get(self, vehicle_id, tag_epc, user_id=None):
@@ -109,7 +109,7 @@ class Tag(Resource):
 class TagsList(Resource):
     def get(self, vehicle_id, user_id=None):
         
-        args = searchParser.parse_args()
+        # args = searchParser.parse_args()
 
         conn = get_db()
         cur = conn.cursor()
