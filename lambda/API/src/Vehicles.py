@@ -7,7 +7,7 @@ Created on 13 apr 2018
 from flask import jsonify, request, json
 from flask_restful import reqparse, Resource
 
-from Database import get_db
+from Database import get_db, TABLE_NAMES, sql
 from Utility import limit_int
 
 from geojson import Point
@@ -42,16 +42,77 @@ class VehiclesList(Resource):
             
         if args['tagId'] is not None:
             try:
-                tagId=limit_int(int(args['tagId']), 0)
+                tagId=args['tagId']
             except ValueError: 
                 pass
             
         
         if tagId is not None:
-            SQL="SELECT v._id, v.lastupdate, v.type, v.name, v.status, v.lastposition, v.image, v.owner FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
-            data = (tagId,)
+            SQL="""Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, v.owner_id as owner, 
+                        CASE WHEN vp.position IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         vp.id,
+                                'geometry',   ST_AsGeoJSON(vp.position)::jsonb,
+                                'properties', CASE WHEN vp.reporter_id IS NOT NULL THEN  json_build_object(
+                                                                                        'reporter_id', vp.reporter_id
+                                                                                     ) ELSE '{{}}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        FROM {} as v 
+                        LEFT JOIN 
+                        (
+                            SELECT vs1.bike_id, vs1.lost
+                            FROM vehicles_bikestatus vs1
+                            LEFT JOIN vehicles_bikestatus vs2 ON vs1.bike_id = vs2.bike_id AND vs1.creation_date < vs2.creation_date
+                            WHERE vs2.creation_date IS NULL
+                        ) as vs
+                        ON vs.bike_id = v.id
+                        LEFT JOIN 
+                        (
+                            SELECT vp1.id, vp1.bike_id, vp1.position, vp1.reporter_id
+                            FROM {} vp1
+                            LEFT JOIN {} vp2 ON vp1.bike_id = vp2.bike_id AND vp1.observed_at < vp2.observed_at
+                            WHERE vp2.observed_at IS NULL
+                        ) as vp
+                        ON vp.bike_id = v.id
+                    JOIN {} as t ON v.id = t.bike_id where t.epc = %s;"""
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['tags']))
+            data = ( tagId,)
         else :            
-            SQL="SELECT _id, lastupdate, type, name, status, lastposition, image, owner FROM vehicles order by id limit %s offset %s;"
+            #SQL="SELECT id, lastupdate, type, name, status, lastposition, image, owner FROM vehicles order by id limit %s offset %s;"
+            SQL = """Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, v.owner_id as owner, 
+                        CASE WHEN vp.position IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         vp.id,
+                                'geometry',   ST_AsGeoJSON(vp.position)::jsonb,
+                                'properties', CASE WHEN vp.reporter_id IS NOT NULL THEN  json_build_object(
+                                                                                        'reporter_id', vp.reporter_id
+                                                                                     ) ELSE '{{}}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        FROM {} as v 
+                        LEFT JOIN 
+                        (
+                            SELECT vs1.bike_id, vs1.lost
+                            FROM vehicles_bikestatus vs1
+                            LEFT JOIN vehicles_bikestatus vs2 ON vs1.bike_id = vs2.bike_id AND vs1.creation_date < vs2.creation_date
+                            WHERE vs2.creation_date IS NULL
+                        ) as vs
+                        ON vs.bike_id = v.id
+                        LEFT JOIN 
+                        (
+                            SELECT vp1.id, vp1.bike_id, vp1.position, vp1.reporter_id
+                            FROM {} vp1
+                            LEFT JOIN {} vp2 ON vp1.bike_id = vp2.bike_id AND vp1.observed_at < vp2.observed_at
+                            WHERE vp2.observed_at IS NULL
+                        ) as vp
+                        ON vp.bike_id = v.id
+                 order by id limit %s offset %s;"""
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
             data = (per_page, offset)
             
         conn = get_db()
@@ -67,9 +128,9 @@ class VehiclesList(Resource):
         result = []
         for row in rows:
             row = dict(zip(columns, row))
-            print(json.dumps(row))
-            row['id'] = row['_id']
-            del row['_id']
+            # print(json.dumps(row))
+            # row['id'] = row['_id']
+            # del row['_id']
             print(json.dumps(row))
             result.append(row)
 
@@ -81,7 +142,6 @@ class VehiclesList(Resource):
         content = request.json
         print(content)
         
-        _type = content.get('type', 1)
         name = content.get('name', None)
         status = content.get('status', 0)
         lastposition  = content.get('lastposition', None)
@@ -92,10 +152,13 @@ class VehiclesList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO vehicles (type, name, status, lastposition, image, owner) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;" 
-        data = (_type, name, status, lastposition, image, owner )
+        SQL = "INSERT INTO {} ( nickname, picture_gallery_id, owner_id) VALUES (%s, %s, %s) RETURNING id;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
+        data = ( name,  image, owner )
         cur.execute(SQL, data) 
         id_of_new_row = cur.fetchone()[0]        
+        
+        # TODO: insert lastposition in the datapoints table
         
         conn.commit()
         cur.close()
@@ -107,18 +170,48 @@ class VehiclesList(Resource):
 # shows a single Vehicle item and lets you delete a Vehicle item
 class Vehicle(Resource):
     def get(self, vehicle_id, user_id=None):
-
+        
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT v.*, ST_AsGeoJSON(d.the_geom) as last_position FROM vehicles v LEFT JOIN datapoints d on d.vehicle_id = v._id and d.timestamp = (SELECT MAX (timestamp) FROM datapoints WHERE vehicle_id = %s) where v._id = %s ;" 
-        data = (2*(vehicle_id,)) # using vehicle_id twice
+        #SQL = "SELECT v.*, ST_AsGeoJSON(d.the_geom) as last_position FROM vehicles v LEFT JOIN datapoints d on d.vehicle_id = v._id where v.id = %s order by d.timestamp desc limit 1;" 
+        SQL = """Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, v.owner_id as owner, 
+                        CASE WHEN vp.position IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         vp.id,
+                                'geometry',   ST_AsGeoJSON(vp.position)::jsonb,
+                                'properties', CASE WHEN vp.reporter_id IS NOT NULL THEN  json_build_object(
+                                                                                        'reporter_id', vp.reporter_id
+                                                                                     ) ELSE '{{}}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        FROM {} as v 
+                        LEFT JOIN 
+                        (
+                            SELECT vs1.bike_id, vs1.lost
+                            FROM vehicles_bikestatus vs1
+                            LEFT JOIN vehicles_bikestatus vs2 ON vs1.bike_id = vs2.bike_id AND vs1.creation_date < vs2.creation_date
+                            WHERE vs2.creation_date IS NULL
+                        ) as vs
+                        ON vs.bike_id = v.id
+                        LEFT JOIN 
+                        (
+                            SELECT vp1.id, vp1.bike_id, vp1.position, vp1.reporter_id
+                            FROM {} vp1
+                            LEFT JOIN {} vp2 ON vp1.bike_id = vp2.bike_id AND vp1.observed_at < vp2.observed_at
+                            WHERE vp2.observed_at IS NULL
+                        ) as vp
+                        ON vp.bike_id = v.id
+                 WHERE v.id = %s;"""
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
+        data = (vehicle_id,) # using vehicle id , not uuid (uuid will be used in V2.0)
         
         try:
             cur.execute(SQL, data)
         except Exception as error: 
             print(error)
             return jsonify([])
-        
         
         rows = cur.fetchall()
         print(rows)
@@ -131,14 +224,6 @@ class Vehicle(Resource):
         for row in rows:
             row = dict(zip(columns, row))
             print(json.dumps(row))
-            row['id'] = row['_id']
-            del row['_id']
-            print(json.dumps(row))
-            
-            if row['last_position'] != None :
-                row['lastposition']=json.loads(row['last_position'])
-            del row['last_position']
-            print(json.dumps(row))
             
             result.append(row)
 
@@ -150,7 +235,8 @@ class Vehicle(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM vehicles WHERE id = %s;" 
+        SQL = "DELETE FROM {} WHERE id = %s;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
         data = (vehicle_id, )
         cur.execute(SQL, data) 
         
@@ -160,11 +246,11 @@ class Vehicle(Resource):
 
     def post(self, vehicle_id, user_id=None):
         content = request.json #: :type content: dict
+        print(' -- content -- ')
         print(content)
         
         if content is None: return None, 304
         
-        _type = content.get('type', 1)
         name = content.get('name', None)
         status = content.get('status', 0)
         lastposition  = content.get('lastposition', None)
@@ -175,28 +261,79 @@ class Vehicle(Resource):
         conn = get_db()
         cur = conn.cursor()
         
+        SQL = "Select id from {} where id::text = %s"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
+        data = ( vehicle_id,)
+        cur.execute(SQL, data) 
+        
+        query_results = cur.fetchone()
+        
+        if query_results is None:
+            return {"Error":"Cannot find vehicle"}, 500
+        
+        vehicle_uuid = query_results[0]
+        
+        # update the position
+        if lastposition is not None :
+            # parse GeoJSON
+            # position = json.loads(lastposition)
+            # print(json.dumps(lastposition))
+            print(' -- lastposition -- ')
+            print(lastposition)
+            if lastposition['type'] == 'Feature':
+                print(' -- geometry -- ')
+                print(lastposition['geometry'])
+                print(' -- coordinates -- ')
+                print(lastposition['geometry']['coordinates'])
+                lon = lastposition['geometry']['coordinates'][0]
+                lat = lastposition['geometry']['coordinates'][1]
+                
+                try:
+                    reporter_id = lastposition['properties']['reporter_id']
+                except:
+                    #TODO use the id of the actual user using this API
+                    reporter_id = 1
+                    
+                try:
+                    reporter_name = lastposition['properties']['reporter_name']
+                except:
+                    #TODO use the id of the actual user using this API
+                    reporter_name = 1
+                
+                try:
+                    reporter_type = lastposition['properties']['reporter_type']
+                except:
+                    #TODO use the id of the actual user using this API
+                    reporter_type = 1
+                    
+                SQL = "INSERT INTO {} (bike_id, position, reporter_id, reporter_name, reporter_type, created_at, observed_at, details, address) VALUES ( %s, ST_SetSRID(ST_Point(%s, %s), 4326), %s, %s, %s, now(), now(), '', '') returning id;"
+                SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']))
+                data = (vehicle_uuid, lon, lat, reporter_id, reporter_name, reporter_type)
+                
+                cur.execute(SQL, data) 
+                id_of_new_row = cur.fetchone()[0]
+                    
+                print('new datapoint row: %s' % (id_of_new_row,))
+            else:
+                return {'Error': "Please provide 'lastposition' as a valid GeoJSON point"}, 500
+        
         inputslist = []
-        SQL = "UPDATE vehicles SET lastupdate = now()" 
-        if 'type' in content :
-            SQL += ', type = %s'
-            inputslist.append(_type)
+        SQL = "UPDATE {} SET lastupdate = now()" 
         if 'name' in content :
-            SQL += ', name = %s'
+            SQL += ', nickname = %s'
             inputslist.append(name)
         if 'status' in content :
-            SQL += ', status = %s'
-            inputslist.append(status)
-        if 'lastposition' in content :
-            SQL += ', lastposition = %s'
-            inputslist.append(lastposition)
+            # TODO INSERT THE NEW STATUS TO THE DATABASE
+            None
         if 'image' in content :
-            SQL += ', image = %s'
+            SQL += ', picture_gallery_id = %s'
             inputslist.append(image)
         if 'owner' in content :
-            SQL += ', owner = %s'
+            SQL += ', owner_id = %s'
             inputslist.append(owner)
         
         SQL += " where id = %s RETURNING id;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
         inputslist.append(vehicle_id)
         
         data = tuple(inputslist)
@@ -214,11 +351,6 @@ class Vehicle(Resource):
 # shows a list of the user's vehicles, and lets you POST to add new vehicles
 class UserVehiclesList(Resource):
     def get(self, user_id):
-        
-        try:
-            int(user_id)
-        except ValueError: 
-            return None # the input is not an integer
         
         args = searchParser.parse_args()
 
@@ -246,10 +378,47 @@ class UserVehiclesList(Resource):
             
         
         if tagId is not None:
-            SQL="SELECT v.* FROM vehicles as v JOIN tags as t ON v.id = t.vehicle_id where t.epc = %s;"
+            SQL="SELECT v.* FROM {} as v JOIN {} as t ON v.id = t.vehicle_id where t.epc = %s;"
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['tags']))
             data = (tagId,)
-        else :            
-            SQL="SELECT * FROM vehicles WHERE owner = %s order by id limit %s offset %s;"
+        else :
+            SQL="""Select v.id as id, v.lastupdate, 1 as type, v.nickname as name, CASE WHEN vs.lost = true THEN 1 ELSE 0 END as status, v.picture_gallery_id, k.kuid as owner, 
+                        CASE WHEN vp.position IS NOT NULL THEN
+                            jsonb_build_object(
+                                'type',       'Feature',
+                                'id',         vp.id,
+                                'geometry',   ST_AsGeoJSON(vp.position)::jsonb,
+                                'properties', CASE WHEN vp.reporter_id IS NOT NULL THEN  json_build_object(
+                                                                                        'reporter_id', vp.reporter_id
+                                                                                     ) ELSE '{{}}' END
+                            )
+                            ELSE NULL
+                        END as lastposition 
+                        FROM {} as v 
+                        LEFT JOIN 
+                        (
+                            SELECT vs1.bike_id, vs1.lost
+                            FROM vehicles_bikestatus vs1
+                            LEFT JOIN vehicles_bikestatus vs2 ON vs1.bike_id = vs2.bike_id AND vs1.creation_date < vs2.creation_date
+                            WHERE vs2.creation_date IS NULL
+                        ) as vs
+                        ON vs.bike_id = v.id
+                        LEFT JOIN 
+                        (
+                            SELECT vp1.id, vp1.bike_id, vp1.position, vp1.reporter_id
+                            FROM {} vp1
+                            LEFT JOIN {} vp2 ON vp1.bike_id = vp2.bike_id AND vp1.observed_at < vp2.observed_at
+                            WHERE vp2.observed_at IS NULL
+                        ) as vp
+                        ON vp.bike_id = v.id
+                        LEFT JOIN
+                        (
+                            SELECT \"UID\" as kuid, user_id as portal_id
+                            FROM {} as u
+                        ) as k
+                        ON k.portal_id = v.owner_id
+                    WHERE k.kuid = %s order by k.kuid limit %s offset %s;"""
+            SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['vehiclemonitor_bikeobservation']), sql.Identifier(TABLE_NAMES['users_mapping']))
             data = (user_id, per_page, offset)
             
         conn = get_db()
@@ -275,19 +444,18 @@ class UserVehiclesList(Resource):
         content = request.json
         print(content)
         
-        _type = content.get('type', 1)
         name = content.get('name', None)
         status = content.get('status', 0)
         lastposition  = content.get('lastposition', None)
         image  = content.get('image', None)
         owner  = content.get('owner', None)
         
-        
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO vehicles (type, name, status, lastposition, image, owner) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;" 
-        data = (_type, name, status, lastposition, image, owner )
+        SQL = "INSERT INTO {} (nickname, status, last_position_id, picture_gallery_id, owner_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['vehicles']))
+        data = (name, status, lastposition, image, owner )
         cur.execute(SQL, data) 
         id_of_new_row = cur.fetchone()[0]        
         

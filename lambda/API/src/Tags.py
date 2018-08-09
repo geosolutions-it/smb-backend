@@ -7,7 +7,7 @@ Created on 09 may 2018
 from flask import jsonify, request
 from flask_restful import reqparse, Resource
 
-from Database import get_db
+from Database import get_db, TABLE_NAMES, sql
 from Utility import limit_int
 
 
@@ -16,23 +16,17 @@ from Utility import limit_int
 searchParser= reqparse.RequestParser()
 searchParser.add_argument('orderBy').add_argument('page').add_argument('per_page').add_argument('tagId')
 
-# TagsList
+# Tags
 # shows a list of all the tags associated with a specific Vehicle, and lets you POST to add new vehicles
 class Tag(Resource):
     def get(self, vehicle_id, tag_epc, user_id=None):
-        
-        print(tag_epc)
-        
-        try:
-            int(vehicle_id)
-        except ValueError: 
-            return None # the input is not an integer
         
         args = searchParser.parse_args()
 
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT epc FROM tags where epc = %s limit 1;" 
+        SQL = "SELECT epc FROM {} where epc = %s limit 1;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         # row = cur.fetchone()
@@ -60,7 +54,8 @@ class Tag(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO tags (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
+        SQL = "INSERT INTO {} (epc, bike_id, creation_date) SELECT %s as epc, v.id as bike_id, NOW() FROM {} as v WHERE v.id = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        
@@ -92,7 +87,8 @@ class Tag(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM tags WHERE epc = %s RETURNING epc;" 
+        SQL = "DELETE FROM {} WHERE epc = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc, )
         
         try:
@@ -113,16 +109,12 @@ class Tag(Resource):
 class TagsList(Resource):
     def get(self, vehicle_id, user_id=None):
         
-        try:
-            int(vehicle_id)
-        except ValueError: 
-            return None # the input is not an integer
-        
-        args = searchParser.parse_args()
+        # args = searchParser.parse_args()
 
         conn = get_db()
         cur = conn.cursor()
-        SQL = "SELECT epc FROM tags where vehicle_id = %s order by epc limit 50;" 
+        SQL = "SELECT epc FROM {} t left join {} v on t.bike_id = v.id where v.id = %s order by epc limit 50;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))
         data = (vehicle_id,) # keep the comma to make it a tuple
         cur.execute(SQL, data) 
         # row = cur.fetchone()
@@ -150,7 +142,8 @@ class TagsList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "INSERT INTO tags (epc, vehicle_id) VALUES (%s, %s) RETURNING epc;" 
+        SQL = "INSERT INTO {} (epc, bike_id, creation_date) SELECT %s, v.id , NOW() FROM {} v WHERE v.id = %s RETURNING epc;"
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']), sql.Identifier(TABLE_NAMES['vehicles']))      
         data = (_id, vehicle_id )
         id_of_new_row = None
         error_message = ""        
@@ -184,7 +177,8 @@ class TagsList(Resource):
         conn = get_db()
         cur = conn.cursor()
         
-        SQL = "DELETE FROM tags WHERE epc = %s RETURNING epc;" 
+        SQL = "DELETE FROM {} WHERE epc = %s RETURNING epc;" 
+        SQL = sql.SQL(SQL).format(sql.Identifier(TABLE_NAMES['tags']))
         data = (tag_epc, )
         
         try:

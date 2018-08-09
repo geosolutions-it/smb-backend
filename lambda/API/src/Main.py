@@ -39,7 +39,7 @@ def close_db(error):
 
 api = Api(app)
 
-API_VERSION = 'v1.0'
+API_VERSION = 'v2.0'
 
 api.add_resource(VehiclesList, '/'+ API_VERSION +'/vehicles')
 api.add_resource(Vehicle, '/'+ API_VERSION +'/vehicles/<vehicle_id>')

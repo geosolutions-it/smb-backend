@@ -8,7 +8,11 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.util.Iterator;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -96,13 +100,15 @@ public class LambdaFunctionHandler implements RequestHandler<SNSEvent, String> {
 	            String line;
 	
 	            QueryBuilder queries = new QueryBuilder(context);
-	            queries.setUsername(username);
+	            // queries.setUsername(username);
 	            
 	            while ((line = in.readLine()) != null) {
 	            	// context.getLogger().log(line);
 	            	
 	            	queries.parseLine(line);
 	            }
+	            
+	            context.getLogger().log("sessionId: "+ queries.getSessionId());
 	            
 	            try {
 	                Properties props = new Properties();
@@ -112,12 +118,55 @@ public class LambdaFunctionHandler implements RequestHandler<SNSEvent, String> {
 	            	String url = "jdbc:postgresql://"+System.getenv("PGHOST")+":"+System.getenv("PGPORT")+"/"+System.getenv("PGDATABASE");
 
 	                Connection conn = DriverManager.getConnection(url, props);
-	                Statement stmt = conn.createStatement();
 	                
+	                int owner_id = -1;
+	                
+	                try (
+	                		PreparedStatement get_owner_id_stmt = conn.prepareStatement("SELECT user_id FROM public.bossoidc_keycloak WHERE \"UID\" = ?;");
+		                ){
+			                get_owner_id_stmt.setString(1, username);
+			                ResultSet owner_id_rs = get_owner_id_stmt.executeQuery();
+			                if (owner_id_rs.next()) {
+			                	owner_id = owner_id_rs.getInt(1);
+			                }
+			                
+		                }
+	                
+	                
+	                // Statement stmt = conn.createStatement();
+	                int track_id = -1;
+	                try (
+	                        PreparedStatement statement = conn.prepareStatement("INSERT INTO public.tracks_track(created_at, owner_id)VALUES ( ?, ?);",
+	                                                      Statement.RETURN_GENERATED_KEYS);
+	                    ) {
+	                        statement.setTimestamp(1, new Timestamp(Long.parseLong(queries.getSessionId())));
+	                        statement.setInt(2, owner_id);
+
+	                        int affectedRows = statement.executeUpdate();
+
+	                        if (affectedRows == 0) {
+	                            throw new SQLException("Creating track failed, no rows affected.");
+	                        }
+
+	                        try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
+	                            if (generatedKeys.next()) {
+	                                track_id = generatedKeys.getInt(1);
+	                                context.getLogger().log("Got track_id: " + track_id + "\n");
+	                            }
+	                            else {
+	                                throw new SQLException("Creating track failed, no ID obtained.");
+	                            }
+	                        }
+	                    }
+
 	                Iterator<String> qI = queries.queries.iterator();
 	                
 	                while( qI.hasNext()) {
-	                	stmt.executeUpdate(qI.next());
+	                	PreparedStatement prprd = conn.prepareStatement(qI.next());
+	                	prprd.setInt(1, track_id);
+	                	prprd.executeUpdate();
+	                	context.getLogger().log("Successfully executed prepared statement.\n");
+	                	// stmt.executeUpdate(qI.next());
 		                // context.getLogger().log("Successfully executed query.\n");
 	                }
 
