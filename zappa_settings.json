@@ -8,7 +8,18 @@
     "role_arn": "arn:aws:iam::227022658256:role/service-role/lambdaSMB",
     "runtime": "python3.6",
     "s3_bucket": "savemybike-code",
-    "xray_tracing": false,
+    "vpc_config": {
+      "SubnetIds": [
+        "subnet-de18a595",
+        "subnet-014edd78",
+        "subnet-2a47d453"
+      ],
+      "SecurityGroupIds": [
+        "sg-0d9f637c",
+        "sg-be8579cf"
+      ]
+    },
+    "xray_tracing": false
   },
   "ingesttrack_dev": {
     "extends": "_common",
@@ -31,6 +42,34 @@
         "function": "smbbackend.awshandlers.handle_calculate_indexes",
         "event_source": {
           "arn": "arn:aws:sns:us-west-2:227022658256:smb-track-created-test",
+          "events": [
+            "sns:Publish"
+          ]
+        }
+      }
+    ]
+  },
+  "calculatebadges_dev": {
+    "extends": "_common",
+    "events": [
+      {
+        "function": "smbbackend.awshandlers.handle_calculate_badges",
+        "event_source": {
+          "arn": "arn:aws:sns:us-west-2:227022658256:smb-indexes-created-test",
+          "events": [
+            "sns:Publish"
+          ]
+        }
+      }
+    ]
+  },
+  "calculateprizes_dev": {
+    "extends": "_common",
+    "events": [
+      {
+        "function": "smbbackend.awshandlers.handle_calculate_prizes",
+        "event_source": {
+          "arn": "arn:aws:sns:us-west-2:227022658256:smb-indexes-created-test",
           "events": [
             "sns:Publish"
           ]
