@@ -233,7 +233,7 @@ class Track():
                 trackedpoint.fields_values['latitude'] = trackedpoint.y
                 trackedpoint.fields_values['speed'] = _vehicle_speed(segment.vehicle_type)
                 trackedpoint.fields_values['timeStamp'] = int(timestamp.timestamp()*1000)
-            a = 1
+
         self.length = cumdistance
 
     def serialize(self, out_path):
