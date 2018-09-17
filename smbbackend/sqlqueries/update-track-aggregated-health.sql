@@ -8,3 +8,4 @@ UPDATE tracks_track SET aggregated_health = (
     GROUP BY s.track_id
   ) AS agg
 )
+WHERE id = %(track_id)s

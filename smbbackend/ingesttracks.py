@@ -124,7 +124,7 @@ def insert_collected_points(track_id: int, track_data: List[PointData],
                             db_cursor):
     query = _get_query("insert-collectedpoint.sql")
     for pt in track_data:
-        vehicle_type = _get_vehicle_type(pt.vehicleMode)
+        vehicle_type = _get_vehicle_type(int(pt.vehicleMode))
         db_cursor.execute(
             query,
             {
@@ -209,7 +209,7 @@ def _get_query(filename) -> str:
     return query
 
 
-def _get_vehicle_type(raw_vehicle_type: str) -> VehicleType:
+def _get_vehicle_type(raw_vehicle_type: int) -> VehicleType:
     """Return the vehicle type as used in the portal DB
 
     The mapping between vehicle types is based on the structure of the java
@@ -219,17 +219,10 @@ def _get_vehicle_type(raw_vehicle_type: str) -> VehicleType:
         72b3a336f97c600fee9b63d63af46a955076f6e9/app/src/main/java/it/\
         geosolutions/savemybike/model/Vehicle.java#L14
 
-    >>> _get_vehicle_type("1")
-    'foot'
-    >>> _get_vehicle_type("2")
-    'bike'
-
     """
-    return {
-        "1": VehicleType.foot,
-        "2": VehicleType.bike,
-        "3": VehicleType.bus,
-        "4": VehicleType.car,
-        "5": VehicleType.average_motorbike,  # moped
-        "6": VehicleType.train,
-    }.get(raw_vehicle_type, VehicleType.unknown)
+
+    try:
+        vehicle_type = VehicleType(raw_vehicle_type)
+    except ValueError:
+        vehicle_type = VehicleType.unknown
+    return vehicle_type
