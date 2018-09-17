@@ -19,7 +19,7 @@ def _vehicle_speed(vehicle_type):
     return {
         'foot': 4.0,
         'bike': 15.0,
-        'motorbike': 50.0,
+        'motorcycle': 50.0,
         'car': 50.0,
         'bus': 40.0,
         'train': 90.0
@@ -32,7 +32,7 @@ def _convert_vehicle_type(vehicle_type):
         "bike": 2,
         "bus": 3,
         "car": 4,
-        "motorbike": 5,
+        "motorcycle": 5,
         "train": 6,
     }.get(vehicle_type, 7)
 
@@ -299,15 +299,15 @@ def makeTracks(source):
     for feature in source:
         props = feature['properties']
 
-        track_id = props['track_id']
+        track_id = props['TRACK_ID']
         track = tracks.get(track_id)
         if not track:
             track = Track(track_id)
             tracks[track_id] = track
 
-        segment_id = props['segment_id']
-        vehicle_type = props['vehicle_ty']
-        timestamp_s = props['timestamp']
+        segment_id = props['SEGMENT_ID']
+        vehicle_type = props['VEHICLE_TY']
+        timestamp_s = props['TIMESTAMP']
         timestamp = dt.datetime.strptime(timestamp_s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
 
         segment_data = SegmentsData(segment_id, vehicle_type, timestamp)
