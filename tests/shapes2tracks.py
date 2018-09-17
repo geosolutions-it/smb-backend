@@ -293,15 +293,6 @@ class SegmentsData():
     def getPoint(self, i):
         return self.trackedpoints[i] if i < len(self.trackedpoints) else None
 
-    def prepare(self):
-        pass
-
-    def _prepare(self):
-        pass
-
-    def serialice(self, out):
-        pass
-
 
 def makeTracks(source):
     tracks = OrderedDict()
