@@ -32,7 +32,7 @@ def _convert_vehicle_type(vehicle_type):
         "bike": 2,
         "bus": 3,
         "car": 4,
-        "average_motorbike": 5,
+        "motorbike": 5,
         "train": 6,
     }.get(vehicle_type, 7)
 
