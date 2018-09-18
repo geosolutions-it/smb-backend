@@ -42,6 +42,7 @@ import boto3
 import pytz
 
 from ._constants import VehicleType
+from .utils import get_query
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def ingest_track(s3_bucket_name: str, object_key: str,
 
 def insert_segments(track_id: int, owner_uuid: str, db_cursor):
     db_cursor.execute(
-        _get_query("insert-track-segments.sql"),
+        get_query("insert-track-segments.sql"),
         {
             "user_uuid": owner_uuid,
             "track_id": track_id,
@@ -111,7 +112,7 @@ def insert_segments(track_id: int, owner_uuid: str, db_cursor):
 def insert_track(track_data: List[PointData], owner: str, db_cursor) -> int:
     """Insert track data into the main database"""
     session_id = list(set([pt.sessionId for pt in track_data]))[0]
-    query = _get_query("insert-track.sql")
+    query = get_query("insert-track.sql")
     db_cursor.execute(
         query,
         (owner, session_id, dt.datetime.now(pytz.utc))
@@ -122,7 +123,7 @@ def insert_track(track_data: List[PointData], owner: str, db_cursor) -> int:
 
 def insert_collected_points(track_id: int, track_data: List[PointData],
                             db_cursor):
-    query = _get_query("insert-collectedpoint.sql")
+    query = get_query("insert-collectedpoint.sql")
     for pt in track_data:
         vehicle_type = _get_vehicle_type(int(pt.vehicleMode))
         db_cursor.execute(
@@ -199,14 +200,6 @@ def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
         return db_cursor.fetchone()[0]
     except TypeError:
         raise RuntimeError("Could not determine track owner internal ID")
-
-
-def _get_query(filename) -> str:
-    base_dir = pathlib.Path(os.path.abspath(__file__)).parent
-    query_path = base_dir / "sqlqueries" / filename
-    with query_path.open(encoding="utf-8") as fh:
-        query = fh.read()
-    return query
 
 
 def _get_vehicle_type(raw_vehicle_type: int) -> VehicleType:
