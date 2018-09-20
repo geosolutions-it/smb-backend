@@ -1,14 +1,14 @@
 SELECT
-  t.id AS track_id,
-  t.created_at AS track_created_at,
+  t.id,
+  t.created_at,
   t.owner_id,
   t.aggregated_costs,
   t.aggregated_emissions,
   t.aggregated_health,
-  t.duration AS track_duration,
+  t.duration,
   t.start_date,
   t.end_date,
-  t.length AS track_length,
+  t.length,
   json_agg(
     json_build_object(
       'id', s.id,

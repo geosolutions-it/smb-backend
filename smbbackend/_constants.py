@@ -40,9 +40,17 @@ AVERAGE_PASSENGER_COUNT = {
     VehicleType.train: 50,
 }
 
+SUSTAINABLE_TRANSPORTS = [
+    VehicleType.bike,
+    VehicleType.bus,
+    VehicleType.foot,
+    VehicleType.train,
+]
 
-def _get_average(*args):
-    return sum(args) / len(args)
+PUBLIC_TRANSPORTS = [
+    VehicleType.bus,
+    VehicleType.train,
+]
 
 
 EMISSIONS = {

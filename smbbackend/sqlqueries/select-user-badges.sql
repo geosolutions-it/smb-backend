@@ -9,4 +9,3 @@ FROM profiles_smbuser AS u
   JOIN django_gamification_badge AS b ON (b.interface_id = i.id)
   LEFT JOIN django_gamification_progression AS p ON (b.progression_id = p.id)
 WHERE u.id = %(user_id)s
-  AND b.acquired = false

@@ -2,6 +2,12 @@
   "_common": {
     "apigateway_enabled": false,
     "aws_region": "us-west-2",
+    "exclude": [
+      "boto3*",
+      "botocore*",
+      "pytest*",
+      "tests*"
+    ],
     "keep_warm": false,
     "manage_roles": false,
     "project_name": "saveMyBike",
