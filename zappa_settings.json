@@ -55,11 +55,11 @@
       }
     ]
   },
-  "calculatebadges_dev": {
+  "updatebadges_dev": {
     "extends": "_common",
     "events": [
       {
-        "function": "smbbackend.awshandlers.handle_calculate_badges",
+        "function": "smbbackend.awshandlers.handle_update_badges",
         "event_source": {
           "arn": "arn:aws:sns:us-west-2:227022658256:smb-indexes-created-test",
           "events": [
