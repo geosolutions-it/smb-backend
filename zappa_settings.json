@@ -1,7 +1,18 @@
 {
-  "_common": {
+  "smbbackend": {
     "apigateway_enabled": false,
     "aws_region": "us-west-2",
+    "events": [
+      {
+        "function": "smbbackend.awshandlers.aws_lambda_handler",
+        "event_source": {
+          "arn": "arn:aws:sns:us-west-2:227022658256:smb_backend_dev",
+          "events": [
+            "sns:Publish"
+          ]
+        }
+      }
+    ],
     "exclude": [
       "boto3*",
       "botocore*",
@@ -9,8 +20,9 @@
       "tests*"
     ],
     "keep_warm": false,
+    "lambda_description": "backend calculations for save-my-bike",
     "manage_roles": false,
-    "project_name": "saveMyBike",
+    "project_name": "savemybike",
     "role_arn": "arn:aws:iam::227022658256:role/service-role/lambdaSMB",
     "runtime": "python3.6",
     "s3_bucket": "savemybike-code",
@@ -26,61 +38,5 @@
       ]
     },
     "xray_tracing": false
-  },
-  "ingesttrack_dev": {
-    "extends": "_common",
-    "events": [
-      {
-        "function": "smbbackend.awshandlers.handle_ingest_track",
-        "event_source": {
-          "arn": "arn:aws:sns:us-west-2:227022658256:smb-data-arrived-test",
-          "events": [
-            "sns:Publish"
-          ]
-        }
-      }
-    ]
-  },
-  "calculateindexes_dev": {
-    "extends": "_common",
-    "events": [
-      {
-        "function": "smbbackend.awshandlers.handle_calculate_indexes",
-        "event_source": {
-          "arn": "arn:aws:sns:us-west-2:227022658256:smb-track-created-test",
-          "events": [
-            "sns:Publish"
-          ]
-        }
-      }
-    ]
-  },
-  "updatebadges_dev": {
-    "extends": "_common",
-    "events": [
-      {
-        "function": "smbbackend.awshandlers.handle_update_badges",
-        "event_source": {
-          "arn": "arn:aws:sns:us-west-2:227022658256:smb-indexes-created-test",
-          "events": [
-            "sns:Publish"
-          ]
-        }
-      }
-    ]
-  },
-  "calculateprizes_dev": {
-    "extends": "_common",
-    "events": [
-      {
-        "function": "smbbackend.awshandlers.handle_calculate_prizes",
-        "event_source": {
-          "arn": "arn:aws:sns:us-west-2:227022658256:smb-indexes-created-test",
-          "events": [
-            "sns:Publish"
-          ]
-        }
-      }
-    ]
   }
 }

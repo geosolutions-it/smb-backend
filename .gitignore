@@ -72,3 +72,6 @@ dist/
 __pycache__/
 *.py[cod]
 .pytest_cache
+
+# egg dirs
+*.egg-info

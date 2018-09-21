@@ -1,35 +1,42 @@
 # smb-backend
 
+## Installation
+
+-  Clone this repo
+-  Use pip to install the code:
+
+   ```
+   pip install --editable .
+   ```
+   
+   (The `--editable` flag is optional, but very useful in development)
+   
+
 ## AWS lambdas deployment
 
-The lambdas can be deployed with [zappa][zappa]. The following zappa stages 
-are available: 
-
--  ingesttrack_dev
--  calculateindexes_dev
--  calculatebadges_dev
--  calculateprizes_dev
-
-check the `zappa_settings.json` file for more details on these.
+The lambdas can be deployed with [zappa][zappa]. Check the 
+`zappa_settings.json` file for more details on available stages.
 
 Deploy a lambda to aws with the following:
 
 ```shell
-zappa deploy ingestrack_dev  # first time deployment
-zappa update ingestrack_dev  # subsequent deployments
-zappa undeploy ingestrack_dev  # remove deployment
+zappa deploy <zappa-stage-name>  # first time deployment
+zappa update <zappa-stage-name>  # subsequent deployments
+zappa undeploy <zappa-stage-name>  # remove deployment
 
 ```
 
 ### Environment variables
 
 The AWS console can be used to set environment variables for each lambda 
-function. In addition, the `scripts/setlambdaenv.py` file may also be used. 
+function. In addition, the `smbbackend/awsutils.py` file may also be used. 
 It works by looking at the current local environment and searching for 
 variables with a special naming. These vars are pushed to the lambda's 
 environment.
 
-How to use it:
+This file is also installed as a console script named `set-lambda-env` when 
+you install this package with pip.
+
 
 -  Set local environment variables with the following naming convention:
 
@@ -49,7 +56,7 @@ For setting the `DB_HOST=somehost` env variable for the
 
 ```shell
 export ZAPPA_SAVEMYBIKE_INGESTTRACK_DEV_DB_HOST=somehost
-python setlambdaenv.py savemybike-ingesttrack-dev
+set-lambda-env.py savemybike-ingesttrack-dev
 ```
 
 Alternatively you could define all environment files in a file, then export

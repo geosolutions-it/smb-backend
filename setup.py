@@ -24,5 +24,10 @@ setup(
         "psycopg2-binary==2.7.5",
         "pytz==2018.5",
         "zappa==0.46.2",
-    ]
+    ],
+    entry_points={
+        "console_scripts": [
+            "set-lambda-env=smbbackend.awsutils:main_set_lambda_env",
+        ]
+    }
 )
