@@ -31,6 +31,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 SNS_TOPIC = os.getenv("SNS_TOPIC")
+USE_SYNCHRONOUS_EXECUTION = os.getenv("SYNCHRONOUS_EXECUTION", "").lower()
 
 
 class MessageType(Enum):
@@ -46,6 +47,38 @@ def aws_lambda_handler(event: dict, context):
     _setup_logging()
     message = _extract_sns_message(event)
     message_type, message_arguments = _parse_message(message)
+    logger.info("message_type: {}".format(message_type))
+    logger.info("message_arguments: {}".format(message_type))
+    if USE_SYNCHRONOUS_EXECUTION in ["true", "1", "yes"]:
+        handler = compact_handler
+    else:
+        handler = modular_handler
+    logger.info("handler: {}".format(handler))
+    return handler(message_type, message_arguments)
+
+
+def compact_handler(message_type:MessageType, message_arguments: dict,
+                    notify=False):
+    """Handler for AWS lambda invocations that does everything"""
+    if message_type == MessageType.track_points_saved:
+        track_id = handle_track_ingestion(notify_completion=notify,
+                                          **message_arguments)
+        handle_indexes_calculations(track_id, notify_completion=notify)
+        handle_badges_update(track_id, notify_completion=notify)
+    else:
+        logger.info("Ignoring message {!r}...".format(message_type.name))
+
+
+def modular_handler(message_type:MessageType, message_arguments: dict):
+    """Handler for AWS lambda invocations that does a single task
+
+    When the execution of each task is completed, a new SNS message is
+    published. This message is asynchronously pcked up by the lambda again
+    in order to execute the next task.
+
+    """
+
+    notify = True
     handler = {
         MessageType.track_points_saved: handle_track_ingestion,
         MessageType.track_ingested: handle_indexes_calculations,
@@ -55,37 +88,41 @@ def aws_lambda_handler(event: dict, context):
     logger.info("message_type: {}".format(message_type))
     logger.info("handler: {}".format(handler))
     if handler is not None:
-        handler(**message_arguments)
+        handler(notify_completion=notify, **message_arguments)
     else:
         logger.info(
             "Could not handle message of type {!r}".format(message_type.name))
 
 
-def handle_track_ingestion(bucket_name, object_key):
+def handle_track_ingestion(bucket_name, object_key, notify_completion=True):
     track_id = ingest_track(
         s3_bucket_name=bucket_name,
         object_key=object_key,
         db_connection=_get_db_connection()
     )
-    _publish_message(
-        SNS_TOPIC, MessageType.track_ingested, track_id=track_id)
+    if notify_completion:
+        _publish_message(
+            SNS_TOPIC, MessageType.track_ingested, track_id=track_id)
+    return track_id
 
 
-def handle_indexes_calculations(track_id):
+def handle_indexes_calculations(track_id, notify_completion=True):
     calculate_indexes(
         track_id,
         _get_db_connection()
     )
-    _publish_message(
-        SNS_TOPIC, MessageType.indexes_calculated, track_id=track_id)
+    if notify_completion:
+        _publish_message(
+            SNS_TOPIC, MessageType.indexes_calculated, track_id=track_id)
 
 
-def handle_badges_update(track_id):
+def handle_badges_update(track_id, notify_completion=True):
     db_connection = _get_db_connection()
     update_badges(track_id, db_connection)
     # update_prizes(track_id, db_connection)
-    _publish_message(
-        SNS_TOPIC, MessageType.badges_updated, track_id=track_id)
+    if notify_completion:
+        _publish_message(
+            SNS_TOPIC, MessageType.badges_updated, track_id=track_id)
 
 
 def _extract_sns_message(event: dict) -> dict:

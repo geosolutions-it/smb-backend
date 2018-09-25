@@ -13,6 +13,38 @@
 from enum import Enum
 
 
+class BadgeName(Enum):
+    new_user = "01_new_user"
+    data_collector_level0 = "02_data_collector_level0"
+    data_collector_level1 = "03_data_collector_level1"
+    data_collector_level2 = "04_data_collector_level2"
+    data_collector_level3 = "05_data_collector_level3"
+    biker_level1 = "06_biker_level1"
+    biker_level2 = "07_biker_level2"
+    biker_level3 = "08_biker_level3"
+    public_mobility_level1 = "09_public_mobility_level1"
+    public_mobility_level2 = "10_public_mobility_level2"
+    public_mobility_level3 = "11_public_mobility_level3"
+    bike_surfer_level1 = "12_bike_surfer_level1"
+    bike_surfer_level2 = "13_bike_surfer_level2"
+    bike_surfer_level3 = "14_bike_surfer_level3"
+    tpl_surfer_level1 = "15_tpl_surfer_level1"
+    tpl_surfer_level2 = "16_tpl_surfer_level2"
+    tpl_surfer_level3 = "17_tpl_surfer_level3"
+    multi_surfer_level1 = "18_multi_surfer_level1"
+    multi_surfer_level2 = "19_multi_surfer_level2"
+    multi_surfer_level3 = "20_multi_surfer_level3"
+    ecologist_level1 = "21_ecologist_level1"
+    ecologist_level2 = "22_ecologist_level2"
+    ecologist_level3 = "23_ecologist_level3"
+    healthy_level1 = "24_healthy_level1"
+    healthy_level2 = "25_healthy_level2"
+    healthy_level3 = "26_healthy_level3"
+    money_saver_level1 = "27_money_saver_level1"
+    money_saver_level2 = "28_money_saver_level2"
+    money_saver_level3 = "29_money_saver_level3"
+
+
 class VehicleType(Enum):
     foot = 1
     bike = 2

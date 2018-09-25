@@ -17,6 +17,7 @@ from typing import List
 
 from .utils import get_query
 from .utils import get_week_bounds
+from ._constants import BadgeName
 from ._constants import PUBLIC_TRANSPORTS
 from ._constants import SUSTAINABLE_TRANSPORTS
 from ._constants import VehicleType
@@ -47,10 +48,10 @@ BadgeInfo = namedtuple("BadgeInfo", [
 
 
 UNHANDLED_BADGES = [
-    "new_user",
-    "money_saver_level1",  # not implemented yet
-    "money_saver_level2",  # not implemented yet
-    "money_saver_level3",  # not implemented yet
+    BadgeName.new_user,
+    BadgeName.money_saver_level1,  # not implemented yet
+    BadgeName.money_saver_level2,  # not implemented yet
+    BadgeName.money_saver_level3,  # not implemented yet
 ]
 
 
@@ -69,34 +70,34 @@ def update_badges(track_id: int, db_connection):
 
 def handle_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
     handler = {
-        "biker_level1": handle_biker_badge,
-        "biker_level2": handle_biker_badge,
-        "biker_level3": handle_biker_badge,
-        "bike_surfer_level1": handle_distance_based_badge,
-        "bike_surfer_level2": handle_distance_based_badge,
-        "bike_surfer_level3": handle_distance_based_badge,
-        "data_collector_level0": handle_data_collector_badge,
-        "data_collector_level1": handle_data_collector_badge,
-        "data_collector_level2": handle_data_collector_badge,
-        "data_collector_level3": handle_data_collector_badge,
-        "ecologist_level1": handle_ecologist_badge,
-        "ecologist_level2": handle_ecologist_badge,
-        "ecologist_level3": handle_ecologist_badge,
-        "healthy_level1": handle_healthy_badge,
-        "healthy_level2": handle_healthy_badge,
-        "healthy_level3": handle_healthy_badge,
-        "public_mobility_level1": handle_public_mobility_badge,
-        "public_mobility_level2": handle_public_mobility_badge,
-        "public_mobility_level3": handle_public_mobility_badge,
-        "money_saver_level1": None,
-        "money_saver_level2": None,
-        "money_saver_level3": None,
-        "multi_surfer_level1": handle_distance_based_badge,
-        "multi_surfer_level2": handle_distance_based_badge,
-        "multi_surfer_level3": handle_distance_based_badge,
-        "tpl_surfer_level1": handle_distance_based_badge,
-        "tpl_surfer_level2": handle_distance_based_badge,
-        "tpl_surfer_level3": handle_distance_based_badge,
+        BadgeName.biker_level1: handle_biker_badge,
+        BadgeName.biker_level2: handle_biker_badge,
+        BadgeName.biker_level3: handle_biker_badge,
+        BadgeName.bike_surfer_level1: handle_distance_based_badge,
+        BadgeName.bike_surfer_level2: handle_distance_based_badge,
+        BadgeName.bike_surfer_level3: handle_distance_based_badge,
+        BadgeName.data_collector_level0: handle_data_collector_badge,
+        BadgeName.data_collector_level1: handle_data_collector_badge,
+        BadgeName.data_collector_level2: handle_data_collector_badge,
+        BadgeName.data_collector_level3: handle_data_collector_badge,
+        BadgeName.ecologist_level1: handle_ecologist_badge,
+        BadgeName.ecologist_level2: handle_ecologist_badge,
+        BadgeName.ecologist_level3: handle_ecologist_badge,
+        BadgeName.healthy_level1: handle_healthy_badge,
+        BadgeName.healthy_level2: handle_healthy_badge,
+        BadgeName.healthy_level3: handle_healthy_badge,
+        BadgeName.public_mobility_level1: handle_public_mobility_badge,
+        BadgeName.public_mobility_level2: handle_public_mobility_badge,
+        BadgeName.public_mobility_level3: handle_public_mobility_badge,
+        BadgeName.money_saver_level1: None,
+        BadgeName.money_saver_level2: None,
+        BadgeName.money_saver_level3: None,
+        BadgeName.multi_surfer_level1: handle_distance_based_badge,
+        BadgeName.multi_surfer_level2: handle_distance_based_badge,
+        BadgeName.multi_surfer_level3: handle_distance_based_badge,
+        BadgeName.tpl_surfer_level1: handle_distance_based_badge,
+        BadgeName.tpl_surfer_level2: handle_distance_based_badge,
+        BadgeName.tpl_surfer_level3: handle_distance_based_badge,
     }[badge.name]
     current_progress = handler(badge, track, db_cursor)
     if current_progress >= badge.target:
@@ -106,10 +107,10 @@ def handle_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
 
 def handle_data_collector_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
     days_offset = {
-        "data_collector_level0": 0,
-        "data_collector_level1": 7 - 1,
-        "data_collector_level2": 14 - 1,
-        "data_collector_level3": 30 - 1,
+        BadgeName.data_collector_level0: 0,
+        BadgeName.data_collector_level1: 7 - 1,
+        BadgeName.data_collector_level2: 14 - 1,
+        BadgeName.data_collector_level3: 30 - 1,
     }
     end_date = track.created_at
     start_date = end_date - dt.timedelta(days=days_offset.get(badge.name, 0))
@@ -138,9 +139,9 @@ def handle_biker_badge(badge: BadgeInfo, track: TrackInfo,
                        db_cursor):
     if uses_vehicle_type(track.segments, VehicleType.bike):
         week_offset_days = {
-            "biker_level1": 0,
-            "biker_level2": 7,  # previous week
-            "biker_level3": 3 * 7,  # three weeks ago
+            BadgeName.biker_level1: 0,
+            BadgeName.biker_level2: 7,  # previous week
+            BadgeName.biker_level3: 3 * 7,  # three weeks ago
         }.get(badge.name)
         reference_date = track.created_at
         end_bound = get_week_bounds(reference_date)[-1]
@@ -160,7 +161,7 @@ def handle_distance_based_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
         "multi_surfer": SUSTAINABLE_TRANSPORTS,
     }
     for badge_name_prefix, vehicle_types in vehicle_type_mapping.items():
-        if badge.name.startswith(badge_name_prefix):
+        if badge.name.name.startswith(badge_name_prefix):
             total_distance = get_total_distance(
                 track.owner_id, vehicle_types, db_cursor)
             break
@@ -241,7 +242,15 @@ def get_badges_info(user_id: int, db_cursor) -> List[BadgeInfo]:
     )
     result = []
     for row in db_cursor.fetchall():
-        result.append(BadgeInfo(*row))
+        result.append(
+            BadgeInfo(
+                id=row[0],
+                name=BadgeName(row[1]),
+                acquired=row[2],
+                target=row[3],
+                progress=row[4],
+            )
+        )
     return result
 
 

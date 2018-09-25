@@ -14,15 +14,22 @@
 
 ## AWS lambdas deployment
 
+In a nutshell, run:
+
+```
+zappa deploy smbbackend
+set-lambda-env smbbackend
+```
+
 The lambdas can be deployed with [zappa][zappa]. Check the 
 `zappa_settings.json` file for more details on available stages.
 
 Deploy a lambda to aws with the following:
 
 ```shell
-zappa deploy <zappa-stage-name>  # first time deployment
-zappa update <zappa-stage-name>  # subsequent deployments
-zappa undeploy <zappa-stage-name>  # remove deployment
+zappa deploy smbbackend  # first time deployment
+zappa update smbbackend  # subsequent deployments
+zappa undeploy smbbackend  # remove deployment
 
 ```
 
@@ -41,12 +48,11 @@ you install this package with pip.
 -  Set local environment variables with the following naming convention:
 
    ```shell
-   ZAPPA_<LAMBDA-FUNCTION-NAME>_<VARIABLE-NAME>=<VARIABLE_VALUE>
+   ZAPPA_SMBBACKEND_<VARIABLE-NAME>=<VARIABLE_VALUE>
 
    ```
 
--  Run the script, providing the name of the lambda function as an argument - 
-   Note that lambdas deployed by zappa are named `<projectname-stagename>`
+-  Run the script, providing the name of the zappa stage an argument
    
    
 Example:
@@ -56,7 +62,7 @@ For setting the `DB_HOST=somehost` env variable for the
 
 ```shell
 export ZAPPA_SAVEMYBIKE_INGESTTRACK_DEV_DB_HOST=somehost
-set-lambda-env.py savemybike-ingesttrack-dev
+set-lambda-env.py smbbackend
 ```
 
 Alternatively you could define all environment files in a file, then export
