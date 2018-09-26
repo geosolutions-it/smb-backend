@@ -1,45 +1,58 @@
 # smb-backend
 
+## Installation
+
+-  Clone this repo
+-  Use pip to install the code:
+
+   ```
+   pip install --editable .
+   ```
+   
+   (The `--editable` flag is optional, but very useful in development)
+   
+
 ## AWS lambdas deployment
 
-The lambdas can be deployed with [zappa][zappa]. The following zappa stages 
-are available: 
+In a nutshell, run:
 
--  ingesttrack_dev
--  calculateindexes_dev
--  calculatebadges_dev
--  calculateprizes_dev
+```
+zappa deploy smbbackend
+set-lambda-env smbbackend
+```
 
-check the `zappa_settings.json` file for more details on these.
+The lambdas can be deployed with [zappa][zappa]. Check the 
+`zappa_settings.json` file for more details on available stages.
 
 Deploy a lambda to aws with the following:
 
 ```shell
-zappa deploy ingestrack_dev  # first time deployment
-zappa update ingestrack_dev  # subsequent deployments
-zappa undeploy ingestrack_dev  # remove deployment
+zappa deploy smbbackend  # first time deployment
+zappa update smbbackend  # subsequent deployments
+zappa undeploy smbbackend  # remove deployment
 
 ```
 
 ### Environment variables
 
 The AWS console can be used to set environment variables for each lambda 
-function. In addition, the `scripts/setlambdaenv.py` file may also be used. 
+function. In addition, the `smbbackend/awsutils.py` file may also be used. 
 It works by looking at the current local environment and searching for 
 variables with a special naming. These vars are pushed to the lambda's 
 environment.
 
-How to use it:
+This file is also installed as a console script named `set-lambda-env` when 
+you install this package with pip.
+
 
 -  Set local environment variables with the following naming convention:
 
    ```shell
-   ZAPPA_<LAMBDA-FUNCTION-NAME>_<VARIABLE-NAME>=<VARIABLE_VALUE>
+   ZAPPA_SMBBACKEND_<VARIABLE-NAME>=<VARIABLE_VALUE>
 
    ```
 
--  Run the script, providing the name of the lambda function as an argument - 
-   Note that lambdas deployed by zappa are named `<projectname-stagename>`
+-  Run the script, providing the name of the zappa stage an argument
    
    
 Example:
@@ -49,7 +62,7 @@ For setting the `DB_HOST=somehost` env variable for the
 
 ```shell
 export ZAPPA_SAVEMYBIKE_INGESTTRACK_DEV_DB_HOST=somehost
-python setlambdaenv.py savemybike-ingesttrack-dev
+set-lambda-env.py smbbackend
 ```
 
 Alternatively you could define all environment files in a file, then export

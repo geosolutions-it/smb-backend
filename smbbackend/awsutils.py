@@ -18,14 +18,25 @@ import boto3
 logger = logging.getLogger(__name__)
 
 
-def main(lambda_name):
+def main_set_lambda_env():
+    parser = get_parser()
+    args = parser.parse_args()
+    configure_logging(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        disable_loggers=["botocore", "urllib3"]
+    )
+    set_lambda_env(args.lambda_name)
+
+
+def set_lambda_env(lambda_name):
     lambda_client = boto3.client("lambda")
     # this is just for validation that the lambda exists
-    lambda_client.get_function_configuration(FunctionName=lambda_name)
+    zappa_lambda_name = "savemybike-{}".format(lambda_name)
+    lambda_client.get_function_configuration(FunctionName=zappa_lambda_name)
     relevant_env = get_relevant_env_variables(lambda_name)
     logger.debug("relevant_env: {}".format(relevant_env))
     update_response = update_lambda_environment_variables(
-        lambda_name, lambda_client, **relevant_env)
+        zappa_lambda_name, lambda_client, **relevant_env)
     logger.info(update_response)
 
 
@@ -57,7 +68,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--verbose",
-        action="store_true"
+        action="store_true",
+        help="Show debug messages"
     )
     return parser
 
@@ -70,10 +82,4 @@ def configure_logging(level, disable_loggers=None):
 
 
 if __name__ == "__main__":
-    parser = get_parser()
-    args = parser.parse_args()
-    configure_logging(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        disable_loggers=["botocore", "urllib3"]
-    )
-    main(args.lambda_name)
+    main_set_lambda_env()

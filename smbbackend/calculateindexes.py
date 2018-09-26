@@ -17,6 +17,7 @@ import pathlib
 
 from . import _constants
 from ._constants import VehicleType
+from .utils import get_query
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def update_track_aggregated_data(track_id, db_cursor):
         "update-track-info.sql",
     ]
     for query_file in queries:
-        db_cursor.execute(_get_query(query_file), query_kwargs)
+        db_cursor.execute(get_query(query_file), query_kwargs)
 
 
 def insert_segment_data(segment_id, emissions, costs, health, db_cursor):
@@ -95,7 +96,7 @@ def insert_segment_data(segment_id, emissions, costs, health, db_cursor):
 
 def get_segments_info(track_id, db_cursor):
     db_cursor.execute(
-        _get_query("get-segment-info.sql"),
+        get_query("get-segment-info.sql"),
         {"track_id": track_id}
     )
     result = []
@@ -121,7 +122,7 @@ def _perform_segment_insert(query_filename, segment_id, query_params: dict,
     all_query_params = query_params.copy()
     all_query_params["segment_id"] = segment_id
     db_cursor.execute(
-        _get_query(query_filename),
+        get_query(query_filename),
         all_query_params
     )
 
@@ -238,11 +239,3 @@ def _get_consumed_calories(speed_km_h, duration_minutes, vehicle_type):
             consumption_per_minute = steps[-1]["calories"]
         result = consumption_per_minute * duration_minutes
     return result
-
-
-def _get_query(filename) -> str:
-    base_dir = pathlib.Path(os.path.abspath(__file__)).parent
-    query_path = base_dir / "sqlqueries" / filename
-    with query_path.open(encoding="utf-8") as fh:
-        query = fh.read()
-    return query

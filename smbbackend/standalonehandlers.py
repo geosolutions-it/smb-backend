@@ -34,6 +34,7 @@ import re
 
 from . import ingesttracks
 from . import calculateindexes
+from . import updatebadges
 from . import utils
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,10 @@ def ingest_track(raw_data: str, owner_uuid: str, db_connection):
 
 def calculate_indexes(track_identifier: int, db_connection):
     calculateindexes.calculate_indexes(track_identifier, db_connection)
+
+
+def update_badges(track_identifier: int, db_connection):
+    updatebadges.update_badges(track_identifier, db_connection)
 
 
 def get_parser():
@@ -89,4 +94,5 @@ if __name__ == "__main__":
                 track_id = ingest_track(csv_contents, args.owner_uuid, connection)
                 logger.debug("Calculating indexes...")
                 calculate_indexes(track_id, connection)
+                update_badges(track_id, connection)
     print("Done!")
