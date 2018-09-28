@@ -13,6 +13,14 @@
 from enum import Enum
 
 
+class AgeRange(Enum):
+    nineteen_or_younger = 1
+    between_nineteen_and_thirty = 2
+    between_thirty_and_sixty_five = 3
+    older_than_sixty_five = 4
+    compound_group = 5
+
+
 class BadgeName(Enum):
     new_user = "01_new_user"
     data_collector_level0 = "02_data_collector_level0"

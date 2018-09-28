@@ -1,4 +1,4 @@
-SELECT SUM(st_length(s.geom::geography)) AS total_bike_distance
+SELECT SUM(st_length(s.geom::geography))
 FROM tracks_segment AS s
   JOIN bossoidc_keycloak AS k ON (s.user_uuid = k."UID")
 WHERE vehicle_type LIKE ANY(%(vehicle_types)s)

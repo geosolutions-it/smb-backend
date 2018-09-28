@@ -85,3 +85,25 @@ keep their definition outside of it in order to keep the config more portable
 
 
 [zappa]: https://github.com/Miserlou/Zappa
+
+
+## Using test data
+
+The `tests/data` directory contains a spatialite DB with some test data. This
+data can be loaded by running:
+
+```
+convert-spatialite --output_dir /tmp tests/data/smb_test_data.sqlite
+
+DB_HOST="<db-host>" \
+DB_NAME="<db-name>" \
+DB_USER="<db-user>" \
+DB_PASSWORD="<db-password>" \
+DB_PORT="<db-port>" \
+ingest-tracks <uuid-of-the-user-who-will-own-tracks> /tmp/track_1.csv /tmp/track_2.csv
+
+```
+
+The `convert-spatialite` and `inges-tracks` scripts become available when the 
+package is installed via pip. They can be combined in order to provide test
+data to multiple users
