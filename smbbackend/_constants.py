@@ -13,12 +13,24 @@
 from enum import Enum
 
 
+class PrizeCriterium(Enum):
+    saved_so2 = "saved SO2 emissions"
+    saved_nox = "saved NOx emissions"
+    saved_co2 = "saved CO2 emissions"
+    saved_co = "saved CO emissions"
+    saved_pm10 = "saved PM10 emissions"
+    consumed_calories = "consumed calories"
+    bike_usage_frequency = "bike usage frequency"
+    public_transport_usage_frequency = "public transport usage frequency"
+    bike_distance = "bike distance"
+    sustainable_means_distance = "sustainable means distance"
+
+
 class AgeRange(Enum):
-    nineteen_or_younger = 1
-    between_nineteen_and_thirty = 2
-    between_thirty_and_sixty_five = 3
-    older_than_sixty_five = 4
-    compound_group = 5
+    nineteen_or_younger = "< 19"
+    between_nineteen_and_thirty = "19 - 30"
+    between_thirty_and_sixty_five = "30- 65"
+    older_than_sixty_five = "65+"
 
 
 class BadgeName(Enum):

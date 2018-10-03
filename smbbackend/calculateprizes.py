@@ -15,14 +15,21 @@ This module should be called periodically
 """
 
 from collections import namedtuple
+from functools import partial
+from itertools import product
 import datetime as dt
+import logging
 from typing import List
+from typing import Tuple
 
 import pytz
 
 from .utils import get_query
-from ._constants import AgeRange
+from ._constants import PrizeCriterium
 
+logger = logging.getLogger(__name__)
+
+LeaderBoardInfo = Tuple[PrizeCriterium, dict]
 
 CompetitionInfo = namedtuple("CompetitionInfo", [
     "id",
@@ -32,60 +39,149 @@ CompetitionInfo = namedtuple("CompetitionInfo", [
     "winner_threshold",
     "start_date",
     "end_date",
-    "age_group",
+    "age_groups",
 ])
 
 CompetitorInfo = namedtuple("CompetitorInfo", [
-    "id",
+    "points",
+    "user_id",
     "age_range",
-    "score"
+    "absolute_score"
 ])
 
 
 def calculate_prizes(db_connection):
+    now = dt.datetime.now(pytz.utc)
+    """Calculate results for currently open competitions"""
     with db_connection:  # changes are committed when `with` block exits
         with db_connection.cursor() as cursor:
-            to_evaluate = get_open_competitions(cursor)
-            for competition in to_evaluate:
-                leaderboard = get_leaderboard(competition)
-                for winner in leaderboard:
-                    assign_competition_winner(winner, competition.id)
+            open_competitions = get_open_competitions(cursor)
+            expired = [c for c in open_competitions if c.end_date < now]
+            logger.debug("number of open competitions: {}".format(
+                len(open_competitions)))
+            logger.debug("number of expired competitions: {}".format(
+                len(expired)))
+            for competition in expired:
+                logger.info(
+                    "Handling competition {}...".format(competition.id))
+                leaderboard = get_leaderboard(competition, cursor)
+                winners = select_competition_winners(competition, leaderboard)
+                assign_competition_winners(winners, competition.id, cursor)
 
 
-def get_open_competitions(db_cursor):
+def get_open_competitions(db_cursor) -> List[CompetitionInfo]:
+    """Get information from the currently open competitions
+
+    Open competitions are those whose start_date is lower than the current
+    date and have no assigned winners yet.
+
+    """
+
     now = dt.datetime.now(pytz.utc)
-    yesterday = now - dt.timedelta(days=1)
     db_cursor.execute(
         get_query("select-current-competitions-info.sql"),
-        {"relevant_date": yesterday}
+        {"relevant_date": now}
     )
     return [CompetitionInfo(*row) for row in db_cursor.fetchall()]
 
 
-def get_leaderboard(competition_id):
-    return []
+def get_leaderboard(competition: CompetitionInfo, db_cursor) -> List[dict]:
+    criteria_handlers = {
+        PrizeCriterium.saved_so2: partial(get_emissions_ranking, "so2_saved"),
+        PrizeCriterium.saved_co2: partial(get_emissions_ranking, "co2_saved"),
+        PrizeCriterium.saved_co: partial(get_emissions_ranking, "co_saved"),
+        PrizeCriterium.saved_nox: partial(get_emissions_ranking, "nox_saved"),
+        PrizeCriterium.saved_pm10: partial(
+            get_emissions_ranking, "pm10_saved"),
+    }
+    criteria_leaderboards = []
+    threshold = len(competition.criteria) * competition.winner_threshold
+    for criterium in competition.criteria:
+        criterium_enumeration = PrizeCriterium(criterium)
+        handler = criteria_handlers[criterium_enumeration]
+        ranking = handler(
+            competition.start_date,
+            competition.end_date,
+            competition.age_groups,
+            threshold,
+            db_cursor
+        )
+        criteria_leaderboards.append((criterium_enumeration, ranking))
+    logger.debug("criteria_leaderboards: {}".format(criteria_leaderboards))
+    return consolidate_leaderboards(criteria_leaderboards)
 
 
-def assign_competition_winner(user_id, competition_id):
-    pass
+def select_competition_winners(competition: CompetitionInfo,
+                               leaderboard: List[dict]) -> List[dict]:
+    winner_threshold = competition.winner_threshold
+    return leaderboard[:winner_threshold]
 
 
-def get_co2_savings_leaderboard(start_date: dt.datetime, end_date: dt.datetime,
-                                winner_threshold: int, db_cursor):
+def assign_competition_winners(winners: List[dict], competition_id: int,
+                               db_cursor):
+    for index, winner in enumerate(winners):
+        rank = index + 1
+        logger.info("Assigning user {} as a winner (rank: {}) of competition "
+                    "{}...".format(winner["user"], rank, competition_id))
+        db_cursor.execute(
+            get_query("insert-competition-winner.sql"),
+            {
+                "competition_id": competition_id,
+                "user_id": winner["user"],
+                "rank": rank,
+            }
+        )
+
+
+def consolidate_leaderboards(
+        leaderboards: List[LeaderBoardInfo]) -> List[dict]:
+    participants = get_unique_participants([b[1] for b in leaderboards])
+    null_competitor = CompetitorInfo(
+        points=0, user_id=None, age_range=None, absolute_score=0)
+    final_leaderboard = {}
+    for participant, board_info in product(participants, leaderboards):
+        criterium, board = board_info
+        final_leaderboard.setdefault(participant,{"points": 0, "boards": {}})
+        board_points = board.get(participant, null_competitor).points
+        board_score = board.get(participant, null_competitor).absolute_score
+        final_leaderboard[participant]["points"] += board_points
+        final_leaderboard[participant]["boards"][criterium] = board_score
+    score_divisor = sum(len(board) for board in leaderboards)
+    total = []
+    for user_id, data in final_leaderboard.items():
+        total.append(
+            {
+                "user": user_id,
+                "points": data["points"] / score_divisor,
+                "criteria_points": data["boards"]
+            }
+        )
+    return sorted(total, key=lambda i: i["points"])
+
+
+def get_unique_participants(leaderboards: List[dict]) -> List[str]:
+    all_partiticipants = set()
+    for board in leaderboards:
+        for user_id in board.keys():
+            all_partiticipants.add(user_id)
+    return list(all_partiticipants)
+
+
+def get_emissions_ranking(pollutant, start_date, end_date, age_groups,
+                          winner_threshold, db_cursor) -> dict:
     query_text = get_query("select-pollutant-savings-leaderboard.sql")
-    formatted_query = query_text.format(pollutant_name="co2_saved")
+    formatted_query = query_text.format(pollutant_name=pollutant)
     db_cursor.execute(
         formatted_query,
         {
             "start_date": start_date,
             "end_date": end_date,
-            "threshold": winner_threshold * (len(AgeRange) - 1),
+            "age_groups": age_groups,
+            "threshold": winner_threshold,
         }
     )
-    result = {}
+    leaderboard = {}
     for row in db_cursor.fetchall():
         info = CompetitorInfo(*row)
-        age_enumeration = AgeRange(info.age_range)
-        entries = result.setdefault(age_enumeration, [])
-        entries.append(info)
-    return result
+        leaderboard[info.user_id] = info
+    return leaderboard
