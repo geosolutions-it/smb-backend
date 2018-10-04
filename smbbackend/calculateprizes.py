@@ -35,7 +35,6 @@ CompetitionInfo = namedtuple("CompetitionInfo", [
     "id",
     "name",
     "criteria",
-    "repeat_when",
     "winner_threshold",
     "start_date",
     "end_date",
@@ -111,6 +110,28 @@ def get_leaderboard(competition: CompetitionInfo, db_cursor) -> List[dict]:
     return consolidate_leaderboards(criteria_leaderboards)
 
 
+def get_user_score(competition: CompetitionInfo, user_id, db_cursor) -> dict:
+    criteria_handlers = {
+        PrizeCriterium.saved_so2: partial(get_emissions_score, "so2_saved"),
+        PrizeCriterium.saved_co2: partial(get_emissions_score, "co2_saved"),
+        PrizeCriterium.saved_co: partial(get_emissions_score, "co_saved"),
+        PrizeCriterium.saved_nox: partial(get_emissions_score, "nox_saved"),
+        PrizeCriterium.saved_pm10: partial(get_emissions_score, "pm10_saved"),
+    }
+    scores = {}
+    for criterium in competition.criteria:
+        criterium_enumeration = PrizeCriterium(criterium)
+        handler = criteria_handlers[criterium_enumeration]
+        score = handler(
+            competition.start_date,
+            competition.end_date,
+            user_id,
+            db_cursor
+        )
+        scores[criterium_enumeration] = score
+    return scores
+
+
 def select_competition_winners(competition: CompetitionInfo,
                                leaderboard: List[dict]) -> List[dict]:
     winner_threshold = competition.winner_threshold
@@ -141,7 +162,7 @@ def consolidate_leaderboards(
     final_leaderboard = {}
     for participant, board_info in product(participants, leaderboards):
         criterium, board = board_info
-        final_leaderboard.setdefault(participant,{"points": 0, "boards": {}})
+        final_leaderboard.setdefault(participant, {"points": 0, "boards": {}})
         board_points = board.get(participant, null_competitor).points
         board_score = board.get(participant, null_competitor).absolute_score
         final_leaderboard[participant]["points"] += board_points
@@ -160,11 +181,11 @@ def consolidate_leaderboards(
 
 
 def get_unique_participants(leaderboards: List[dict]) -> List[str]:
-    all_partiticipants = set()
+    all_participants = set()
     for board in leaderboards:
         for user_id in board.keys():
-            all_partiticipants.add(user_id)
-    return list(all_partiticipants)
+            all_participants.add(user_id)
+    return list(all_participants)
 
 
 def get_emissions_ranking(pollutant, start_date, end_date, age_groups,
@@ -185,3 +206,17 @@ def get_emissions_ranking(pollutant, start_date, end_date, age_groups,
         info = CompetitorInfo(*row)
         leaderboard[info.user_id] = info
     return leaderboard
+
+
+def get_emissions_score(pollutant, start_date, end_date, user_id, db_cursor):
+    query_text = get_query("select-user-score-pollutant-savings.sql")
+    formatted_query = query_text.format(pollutant_name=pollutant)
+    db_cursor.execute(
+        formatted_query,
+        {
+            "start_date": start_date,
+            "end_date": end_date,
+            "user_id": user_id,
+        }
+    )
+    return db_cursor.fetchone()[0] or 0
