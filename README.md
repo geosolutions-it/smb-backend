@@ -17,7 +17,8 @@
 In a nutshell, run:
 
 ```
-zappa deploy smbbackend
+zappa deploy smbbackend  # the first time
+zappa update smbbackend  # subsequent deployments
 set-lambda-env smbbackend
 ```
 

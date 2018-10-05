@@ -4,13 +4,17 @@
     "aws_region": "us-west-2",
     "events": [
       {
-        "function": "smbbackend.awshandlers.aws_lambda_handler",
+        "function": "smbbackend.awshandlers.aws_track_handler",
         "event_source": {
           "arn": "arn:aws:sns:us-west-2:227022658256:smb_backend_dev",
           "events": [
             "sns:Publish"
           ]
         }
+      },
+      {
+        "function": "smbbackend.awshandlers.competitions_handler",
+        "expression": "cron(0 1 * * ? *)"
       }
     ],
     "exclude": [

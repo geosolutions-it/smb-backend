@@ -21,6 +21,7 @@ import boto3
 from .ingesttracks import ingest_track
 from .calculateindexes import calculate_indexes
 from .updatebadges import update_badges
+from .calculateprizes import calculate_prizes
 from . import utils
 
 logger = logging.getLogger(__name__)
@@ -39,27 +40,34 @@ class MessageType(Enum):
     track_ingested = 2
     indexes_calculated = 3
     badges_updated = 4
-    unknown = 5
+    competitions_updated = 5
+    unknown = 6
 
 
-def aws_lambda_handler(event: dict, context):
-    """Handler for AWS lambda invocations"""
+def aws_track_handler(event: dict, context):
+    """Handler for lambda invocations that triggers when a track is generated
+
+    This handler is called whenever an SNS notification is published on the
+    relevant topic
+
+    """
+
     _setup_logging()
     message = _extract_sns_message(event)
     message_type, message_arguments = _parse_message(message)
     logger.info("message_type: {}".format(message_type))
     logger.info("message_arguments: {}".format(message_type))
     if USE_SYNCHRONOUS_EXECUTION in ["true", "1", "yes"]:
-        handler = compact_handler
+        handler = compact_track_handler
     else:
-        handler = modular_handler
+        handler = modular_track_handler
     logger.info("handler: {}".format(handler))
     return handler(message_type, message_arguments)
 
 
-def compact_handler(message_type:MessageType, message_arguments: dict,
-                    notify=False):
-    """Handler for AWS lambda invocations that does everything"""
+def compact_track_handler(message_type:MessageType, message_arguments: dict,
+                          notify=True):
+    """Handler for track-related stuff that does everything"""
     if message_type == MessageType.track_points_saved:
         track_id = handle_track_ingestion(notify_completion=notify,
                                           **message_arguments)
@@ -69,8 +77,8 @@ def compact_handler(message_type:MessageType, message_arguments: dict,
         logger.info("Ignoring message {!r}...".format(message_type.name))
 
 
-def modular_handler(message_type:MessageType, message_arguments: dict):
-    """Handler for AWS lambda invocations that does a single task
+def modular_track_handler(message_type:MessageType, message_arguments: dict):
+    """Handler for track-related stuff that does a single task
 
     When the execution of each task is completed, a new SNS message is
     published. This message is asynchronously pcked up by the lambda again
@@ -92,6 +100,13 @@ def modular_handler(message_type:MessageType, message_arguments: dict):
     else:
         logger.info(
             "Could not handle message of type {!r}".format(message_type.name))
+
+
+def competitions_handler(notify_completion=True):
+    db_connection = _get_db_connection()
+    calculate_prizes(db_connection)
+    if notify_completion:
+        _publish_message(SNS_TOPIC, MessageType.competitions_updated)
 
 
 def handle_track_ingestion(bucket_name, object_key, notify_completion=True):
@@ -119,7 +134,6 @@ def handle_indexes_calculations(track_id, notify_completion=True):
 def handle_badges_update(track_id, notify_completion=True):
     db_connection = _get_db_connection()
     update_badges(track_id, db_connection)
-    # update_prizes(track_id, db_connection)
     if notify_completion:
         _publish_message(
             SNS_TOPIC, MessageType.badges_updated, track_id=track_id)
