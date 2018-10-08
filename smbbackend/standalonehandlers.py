@@ -29,8 +29,7 @@ python -m smbbackend.standalonehandlers \
 import argparse
 import logging
 import os
-import pathlib
-import re
+from pathlib import Path
 
 from . import ingesttracks
 from . import calculateindexes
@@ -69,8 +68,11 @@ def update_badges(track_identifier: int, db_connection):
 
 def get_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_dir")
     parser.add_argument("owner_uuid")
+    parser.add_argument(
+        "csv_path",
+        nargs="+"
+    )
     parser.add_argument(
         "--verbose",
         action="store_true"
@@ -78,21 +80,25 @@ def get_parser():
     return parser
 
 
-if __name__ == "__main__":
+def main():
     parser = get_parser()
     args = parser.parse_args()
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.WARNING)
-    csv_dir = pathlib.Path(args.csv_dir).expanduser()
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     connection = utils.get_db_connection(
         DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT)
-    for item in csv_dir.iterdir():
+    for item in (Path(i).expanduser().resolve() for i in args.csv_path):
         if item.is_file():
             with item.open() as fh:
-                logger.debug("Ingesting file {}...".format(item.name))
+                logger.info("Ingesting file {}...".format(item.name))
                 csv_contents = fh.read()
-                track_id = ingest_track(csv_contents, args.owner_uuid, connection)
-                logger.debug("Calculating indexes...")
+                track_id = ingest_track(
+                    csv_contents, args.owner_uuid, connection)
+                logger.info("Calculating indexes...")
                 calculate_indexes(track_id, connection)
+                logger.info("Updating badges...")
                 update_badges(track_id, connection)
-    print("Done!")
+    logger.info("Done!")
+
+
+if __name__ == "__main__":
+    main()

@@ -167,7 +167,7 @@ def handle_distance_based_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
             break
     else:
         total_distance = 0
-    distance_km = total_distance / 1000
+    distance_km = total_distance / 1000 if total_distance is not None else 0
     return distance_km
 
 

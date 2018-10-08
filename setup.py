@@ -28,7 +28,8 @@ setup(
     entry_points={
         "console_scripts": [
             "set-lambda-env=smbbackend.awsutils:main_set_lambda_env",
-            "convert-shapefile=smbbackend.convertshapefiles:main",
+            "convert-spatialite=smbbackend.convertspatialfiles:main",
+            "ingest-tracks=smbbackend.standalonehandlers:main",
         ]
     }
 )

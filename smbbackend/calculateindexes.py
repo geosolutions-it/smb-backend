@@ -101,9 +101,11 @@ def get_segments_info(track_id, db_cursor):
     )
     result = []
     for row in db_cursor.fetchall():
+        logger.info("row: {}".format(row))
         segment_id, vehicle_type, length_meters, duration = row
         length_km = length_meters / 1000
         duration_hours = duration.days * 24 + duration.seconds / (60 * 60)
+        logger.info("duration_hours: {}".format(duration_hours))
         avg_speed = length_km / duration_hours  # km/h
         result.append(
             SegmentInfo(
