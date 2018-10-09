@@ -32,10 +32,9 @@ from collections import namedtuple
 import datetime as dt
 import io
 import logging
-import os
-import pathlib
 import re
 from typing import List
+from typing import Optional
 import zipfile
 
 import boto3
@@ -75,8 +74,8 @@ _DATA_FIELDS = [
 PointData = namedtuple("PointData", _DATA_FIELDS)
 
 
-def ingest_track(s3_bucket_name: str, object_key: str,
-                 db_connection) -> int:
+def ingest_s3_data(s3_bucket_name: str, object_key: str,
+                   db_connection) -> Optional[int]:
     """Ingest track data into smb database"""
     try:
         track_owner = get_track_owner_uuid(object_key)
@@ -85,6 +84,10 @@ def ingest_track(s3_bucket_name: str, object_key: str,
             "Could not determine track owner for object {}".format(object_key))
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = retrieve_track_data(s3_bucket_name, object_key)
+    return ingest_data(track_owner, raw_data, db_connection)
+
+
+def ingest_data(track_owner, raw_data, db_connection) -> Optional[int]:
     logger.debug("Parsing retrieved track data...")
     parsed_data = parse_track_data(raw_data)
     logger.debug("Performing calculations and creating database records...")
@@ -93,8 +96,45 @@ def ingest_track(s3_bucket_name: str, object_key: str,
             user_id = get_track_owner_internal_id(track_owner, cursor)
             track_id = insert_track(parsed_data, user_id, cursor)
             insert_collected_points(track_id, parsed_data, cursor)
-            insert_segments(track_id, track_owner, cursor)
-    return track_id
+            logger.info(
+                "Removing points which are outside the region of interest...")
+            num_deleted = filter_out_external_points(track_id, cursor)
+            logger.debug("Removed {} points".format(num_deleted))
+            if track_has_points(track_id, cursor):
+                logger.info("Inserting track segments...")
+                insert_segments(track_id, track_owner, cursor)
+                result = track_id
+            else:
+                logger.info("All points were outside the region of interest, "
+                            "removing track...")
+                cursor.execute(
+                    get_query("delete-track.sql"),
+                    {"track_id": track_id}
+                )
+                result = None
+    return result
+
+
+def filter_out_external_points(track_id: int, db_cursor):
+    """Remove points that do not intersect with region of interest geometry"""
+    db_cursor.execute(
+        get_query("delete-external-points.sql"),
+        {"track_id": track_id},
+    )
+    num_deleted = 0
+    for i in db_cursor.fetchall():
+        num_deleted +=1
+    return num_deleted
+
+
+def track_has_points(track_id: int, db_cursor) -> bool:
+    """Confirm that the track has points associated with it"""
+    db_cursor.execute(
+        get_query("select-count-track-points.sql"),
+        {"track_id": track_id},
+    )
+    num_points = db_cursor.fetchone()[0]
+    return bool(num_points)
 
 
 def insert_segments(track_id: int, owner_uuid: str, db_cursor):
