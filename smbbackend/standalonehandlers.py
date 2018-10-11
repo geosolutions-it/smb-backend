@@ -31,7 +31,7 @@ import logging
 import os
 from pathlib import Path
 
-from . import ingesttracks
+from .ingesttracks import ingest_data
 from . import calculateindexes
 from . import updatebadges
 from . import utils
@@ -43,19 +43,6 @@ DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
-
-
-def ingest_track(raw_data: str, owner_uuid: str, db_connection):
-    parsed_data = ingesttracks.parse_track_data(raw_data)
-    logger.debug("Performing calculations and creating database records...")
-    with db_connection:  # changes are committed when `with` block exits
-        with db_connection.cursor() as cursor:
-            user_id = ingesttracks.get_track_owner_internal_id(
-                owner_uuid, cursor)
-            track_id = ingesttracks.insert_track(parsed_data, user_id, cursor)
-            ingesttracks.insert_collected_points(track_id, parsed_data, cursor)
-            ingesttracks.insert_segments(track_id, owner_uuid, cursor)
-    return track_id
 
 
 def calculate_indexes(track_identifier: int, db_connection):
@@ -91,12 +78,13 @@ def main():
             with item.open() as fh:
                 logger.info("Ingesting file {}...".format(item.name))
                 csv_contents = fh.read()
-                track_id = ingest_track(
-                    csv_contents, args.owner_uuid, connection)
-                logger.info("Calculating indexes...")
-                calculate_indexes(track_id, connection)
-                logger.info("Updating badges...")
-                update_badges(track_id, connection)
+                track_id = ingest_data(
+                    args.owner_uuid, csv_contents, connection)
+                if track_id is not None:
+                    logger.info("Calculating indexes...")
+                    calculate_indexes(track_id, connection)
+                    logger.info("Updating badges...")
+                    update_badges(track_id, connection)
     logger.info("Done!")
 
 

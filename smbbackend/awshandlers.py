@@ -18,7 +18,7 @@ import os
 
 import boto3
 
-from .ingesttracks import ingest_track
+from .ingesttracks import ingest_s3_data
 from .calculateindexes import calculate_indexes
 from .updatebadges import update_badges
 from .calculateprizes import calculate_prizes
@@ -71,8 +71,9 @@ def compact_track_handler(message_type:MessageType, message_arguments: dict,
     if message_type == MessageType.track_points_saved:
         track_id = handle_track_ingestion(notify_completion=notify,
                                           **message_arguments)
-        handle_indexes_calculations(track_id, notify_completion=notify)
-        handle_badges_update(track_id, notify_completion=notify)
+        if track_id is not None:
+            handle_indexes_calculations(track_id, notify_completion=notify)
+            handle_badges_update(track_id, notify_completion=notify)
     else:
         logger.info("Ignoring message {!r}...".format(message_type.name))
 
@@ -110,12 +111,12 @@ def competitions_handler(notify_completion=True):
 
 
 def handle_track_ingestion(bucket_name, object_key, notify_completion=True):
-    track_id = ingest_track(
+    track_id = ingest_s3_data(
         s3_bucket_name=bucket_name,
         object_key=object_key,
         db_connection=_get_db_connection()
     )
-    if notify_completion:
+    if notify_completion and track_id is not None:
         _publish_message(
             SNS_TOPIC, MessageType.track_ingested, track_id=track_id)
     return track_id
