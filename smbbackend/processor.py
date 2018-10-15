@@ -38,6 +38,26 @@ SegmentInfo = namedtuple("SegmentInfo", [
     "vehicle_type"
 ])
 
+
+def process_data(raw_data, db_cursor, distance_threshold=20):
+    logger.info("parsing raw data...")
+    point_data = parse_point_raw_data(raw_data)
+    error = validate_point_data(point_data)
+    if error is not None:
+        pass  # interrupt processing
+    coordinate_transformer = get_coordinate_transformer()
+    segments = generate_segments(
+        point_data,
+        coordinate_transformer,
+        distance_threshold=distance_threshold
+    )
+    segments = apply_segment_filters(segments, db_cursor)
+    error = validate_segments(segments, coordinate_transformer)
+    if error is not None:
+        pass  # interrupt processing
+    return segments
+
+
 class PointData(object):
 
     geometry: ogr.Geometry = None
@@ -214,7 +234,10 @@ def filter_invalid_temporal_points(segments: SegmentData,
 
     def _check_temporal_bounds(point: PointData):
         ts = point.timestamp
-        return lower_bound <= ts <= upper_bound
+        result = lower_bound <= ts <= upper_bound
+        if not result:
+            logger.debug("Point is outside temporal bounds")
+        return result
 
     return _reconcile_segments(segments, test_func=_check_temporal_bounds)
 
@@ -223,7 +246,10 @@ def filter_points_outside_region_of_interest(segments: SegmentData,
                                              region_of_interest: ogr.Geometry):
 
     def _check_intersection(point: PointData):
-        return region_of_interest.Intersects(point.geometry)
+        result = region_of_interest.Intersects(point.geometry)
+        if not result:
+            logger.debug("Point is outside region of interest")
+        return result
 
     return _reconcile_segments(segments, _check_intersection)
 
@@ -240,7 +266,6 @@ def _reconcile_segments(segments: SegmentData, test_func):
             if test_func(point):
                 new_segment.append(point)
             else:  # discard this point and start a new segment
-                logger.debug("Discarding invalid point...")
                 if len(new_segment) > 0:
                     result.append(new_segment[:])
                     new_segment.clear()
@@ -293,12 +318,12 @@ def get_segment_speeds(segment, coordinate_transformer):
 
     max_speed = 0
     min_speed = 1000
-    for p1_index in range(0, len(segment), 2):
+    for p1_index in range(len(segment) - 1):
         p2_index = p1_index + 1
         p1 = segment[p1_index]
         p2 = segment[p2_index]
         sub_segment = [p1, p2]
-        sub_segment_duration = get_segment_geometry(sub_segment)
+        sub_segment_duration = get_segment_duration(sub_segment)
         geom = get_segment_geometry(sub_segment)
         sub_segment_length = get_length(geom, coordinate_transformer)
         average_speed = sub_segment_length / sub_segment_duration
@@ -354,20 +379,9 @@ def validate_segments(segments: SegmentData, coordinate_transformer):
             verify_segment_consistency(segment, info)
 
 
-def process_data(raw_data, db_cursor, distance_threshold=20):
-    logger.info("parsing raw data...")
-    point_data = parse_point_raw_data(raw_data)
-    error = validate_point_data(point_data)
-    if error is not None:
-        pass  # interrupt processing
-    coordinate_transformer = get_coordinate_transformer()
-    segments = generate_segments(
-        point_data,
-        coordinate_transformer,
-        distance_threshold=distance_threshold
-    )
+def apply_segment_filters(segments, db_cursor):
     region_of_interest = get_region_of_interest(db_cursor)
-    segment_filterers = OrderedDict({
+    filters = OrderedDict({
         filter_invalid_temporal_points: (
             None,
             {
@@ -384,16 +398,14 @@ def process_data(raw_data, db_cursor, distance_threshold=20):
             {"threshold": 1}
         ),
     })
-    segments = apply_segment_filterers(segments, segment_filterers)
-    validate_segments(segments, coordinate_transformer)
-    return segments
-
-
-def apply_segment_filterers(segments, filterers):
     current_segments = segments
-    for handler, params in filterers.items():
+    for handler, params in filters.items():
         args, kwargs = params
-        current_segments = handler(current_segments, *args, **kwargs)
+        current_segments = handler(
+            current_segments,
+            *(args or []),
+            **(kwargs or {})
+        )
         if len(current_segments) == 0:
             break
     return current_segments
