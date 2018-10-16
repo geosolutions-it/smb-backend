@@ -155,7 +155,11 @@ def insert_track(track_data: List[PointData], owner: str, db_cursor) -> int:
     query = get_query("insert-track.sql")
     db_cursor.execute(
         query,
-        (owner, session_id, dt.datetime.now(pytz.utc))
+        {
+            "owner_id": owner,
+            "session_id": session_id,
+            "created_at": dt.datetime.now(pytz.utc)
+        }
     )
     track_id = db_cursor.fetchone()[0]
     return track_id
