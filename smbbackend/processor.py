@@ -15,6 +15,7 @@ import logging
 import re
 from typing import List
 from typing import Tuple
+from typing import Callable
 import zipfile
 
 import boto3
@@ -428,13 +429,115 @@ def filter_invalid_temporal_points(segments: SegmentData,
 def filter_points_outside_region_of_interest(segments: SegmentData,
                                              region_of_interest: ogr.Geometry):
 
+
     def _check_intersection(point: PointData):
         result = region_of_interest.Intersects(point.geometry)
         if not result:
             logger.debug("Point is outside region of interest")
         return result
 
-    return _reconcile_segments(segments, _check_intersection)
+
+    def _segment_point_invalid_region_of_interest(new_segment,
+                                                  original_segment,
+                                                  point,
+                                                  point_index,
+                                                  result):
+        """If current point is outside region of interest we discard it and
+        start a new segment for subsequent points. Additionally, we check if
+        it is possible to create a new point at the intersection with the
+        region of interest in place of the current one.
+
+        """
+
+        try:
+            previous_point = original_segment[point_index-1]
+        except IndexError:
+            pass  # there is no previous point on the segment
+        else:
+            if _check_intersection(previous_point):
+                sub_segment = [previous_point, point]
+                intersection_point = get_segment_intersection_point(
+                    sub_segment, region_of_interest)
+                new_segment.append(intersection_point)
+        # discard this point and start a new segment
+        if len(new_segment) > 0:
+            result.append(new_segment[:])
+            new_segment.clear()
+        try:
+            next_point = original_segment[point_index+1]
+        except IndexError:
+            pass  # there is no next point on the segment
+        else:
+            if _check_intersection(next_point):
+                sub_segment = [point, next_point]
+                intersection_point = get_segment_intersection_point(
+                    sub_segment, region_of_interest)
+                new_segment.append(intersection_point)
+
+    return _reconcile_segments(
+        segments,
+        _check_intersection,
+        point_invalid_func=_segment_point_invalid_region_of_interest
+    )
+
+
+def get_segment_intersection_point(segment: List[PointData],
+                                   region_of_interest: ogr.Geometry):
+    geom = get_segment_geometry(segment)
+    boundary = region_of_interest.GetBoundary()
+    intersection = geom.Intersection(boundary)
+    # `intersection` might be single or multi, convert to multi to make uniform
+    multi_intersection = ogr.ForceToMultiPoint(intersection)
+    first_intersection_geom = multi_intersection.GetGeometryRef(0)
+    intersection_coords = first_intersection_geom.GetPoint()
+    result = PointData(
+        latitude=intersection_coords[1],
+        longitude=intersection_coords[0],
+        timestamp=segment[1].timestamp,
+        vehicle_type=segment[1].vehicle_type,
+        session_id=segment[1].session_id
+    )
+    # now adjust the timestamp
+    new_segment = [segment[0], result]
+    new_segment_geometry = get_segment_geometry(new_segment)
+    length_factor = new_segment_geometry.Length() / geom.Length()
+    segment_duration = get_segment_duration(segment)
+    new_segment_duration = segment_duration * length_factor
+    result.timestamp = segment[0].timestamp + dt.timedelta(
+        seconds=new_segment_duration)
+    return result
+
+
+def _segment_point_valid(new_segment: List, original_segment: List[PointData],
+                         point: PointData, point_index: int, result: List):
+    new_segment.append(point)
+
+
+def _segment_point_invalid(new_segment: List,
+                           original_segment: List[PointData],
+                           point: PointData,
+                           point_index: int,
+                           result: List):
+    # discard this point and start a new segment
+    if len(new_segment) > 0:
+        result.append(new_segment[:])
+        new_segment.clear()
+
+
+def _reconcile_segments(segments: SegmentData, test_func,
+                        point_valid_func: Callable=_segment_point_valid,
+                        point_invalid_func: Callable=_segment_point_invalid):
+    result = []
+    for segment in segments:
+        new_segment = []
+        for index, point in enumerate(segment):
+            if test_func(point):
+                point_valid_func(new_segment, segment, point, index, result)
+            else:
+                point_invalid_func(new_segment, segment, point, index, result)
+        if len(new_segment) > 0:
+            result.append(new_segment)
+    return result
 
 
 def filter_small_segments(segments: SegmentData,
@@ -444,7 +547,7 @@ def filter_small_segments(segments: SegmentData,
     return [s for s in segments if len(s) > threshold]
 
 
-def _reconcile_segments(segments: SegmentData, test_func):
+def _old_reconcile_segments(segments: SegmentData, test_func):
     result = []
     for segment in segments:
         new_segment = []
