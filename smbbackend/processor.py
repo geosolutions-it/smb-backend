@@ -30,19 +30,26 @@ logger = logging.getLogger(__name__)
 
 
 DATA_PROCESSING_PARAMETERS = {
-    "segments_distance_threshold": 200,
+    "segments_distance_thresholds": {  # in m
+        VehicleType.foot: 100,
+        VehicleType.bike: 300,
+        VehicleType.motorcycle: 500,
+        VehicleType.car: 500,
+        VehicleType.bus: 500,
+        VehicleType.train: 1000,
+    },
     "segments_minute_threshold": 5,
     "segments_temporal_lower_bound": dt.datetime(2018, 1, 1, tzinfo=pytz.utc),
     "segments_temporal_upper_bound": dt.datetime.now(pytz.utc),
     "segments_small_threshold": 1,
     "points_position_threshold": 0.1,
     "segments_speed_thresholds": {  # (average_speed, max_speed), in m/s
-        VehicleType.foot: (2.7, 2.7),
-        VehicleType.bike: (8.3, 8.3),
-        VehicleType.motorcycle: (22.2, 22.2),
-        VehicleType.car: (22.2, 22.2),
-        VehicleType.bus: (16.7, 16.7),
-        VehicleType.train: (22.2, 22.2),
+        VehicleType.foot: (1.95, 2.78),  # 7km/h , 10 km/h
+        VehicleType.bike: (30, 30),  # 108 km/h, 108 km/h
+        VehicleType.motorcycle: (38.89, 52.78),  # 140 km/h, 190 km/h
+        VehicleType.car: (38.89, 52.78),  # 140 km/h, 190 km/h
+        VehicleType.bus: (27.78, 38.89),  # 100 km/h, 140 km/h
+        VehicleType.train: (41.67, 55.56),  # 150 km/h, 200 km/h
     },
     "segments_length_thresholds": {  # expressed in m
         VehicleType.foot: 50000,  # 50 km
@@ -243,7 +250,7 @@ def process_data(raw_data, db_cursor, **settings) -> FullSegmentData:
         filtered_points,
         coordinate_transformer,
         minute_threshold=settings["segments_minute_threshold"],
-        distance_threshold=settings["segments_distance_threshold"]
+        distance_thresholds=settings["segments_distance_thresholds"]
     )
     filtered_segments = apply_segment_filters(
         segments,
@@ -367,8 +374,8 @@ def validate_points(points: List[PointData]):
 
 
 def generate_segments(points: List[PointData], transformer,
-                      minute_threshold: int=5,
-                      distance_threshold: float =20) -> SegmentData:
+                      minute_threshold: int,
+                      distance_thresholds: dict) -> SegmentData:
     """Split the input points into segments
 
     A new segment is created whenever some characteristic of the current
@@ -392,7 +399,7 @@ def generate_segments(points: List[PointData], transformer,
         minutes_passed = (pt.timestamp - last_point.timestamp).seconds / 60
         too_much_time_passed = minutes_passed > minute_threshold
         last_distance = pt.get_distance(last_point, transformer)
-        too_far_away = last_distance > distance_threshold
+        too_far_away = last_distance > distance_thresholds[pt.vehicle_type]
 
         if vehicle_changed:
             logger.debug("vehicle type changed, starting new segment...")

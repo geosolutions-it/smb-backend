@@ -81,15 +81,22 @@ def main():
             logger.info("Ingesting file {}...".format(item.name))
             with item.open() as fh:
                 csv_contents = fh.read()
-            with connection as conn:
-                with conn.cursor() as cursor:
-                    segments = process_data(
-                        csv_contents, cursor, **DATA_PROCESSING_PARAMETERS)
-                    track_id = save_track(segments, args.owner_uuid, cursor)
-            logger.info("Calculating indexes...")
-            calculate_indexes(track_id, connection)
-            logger.info("Updating badges...")
-            update_badges(track_id, connection)
+            try:
+                with connection as conn:
+                    with conn.cursor() as cursor:
+                        segments = process_data(
+                            csv_contents, cursor, **DATA_PROCESSING_PARAMETERS)
+                        track_id = save_track(
+                            segments, args.owner_uuid, cursor)
+            except RuntimeError:
+                logger.exception(
+                    "Could not process file {!r}".format(item.name))
+            else:
+                # TODO: do not calculate indexes for invalid tracks
+                logger.info("Calculating indexes...")
+                calculate_indexes(track_id, connection)
+                logger.info("Updating badges...")
+                update_badges(track_id, connection)
     logger.info("Done!")
 
 
