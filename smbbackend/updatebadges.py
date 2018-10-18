@@ -17,26 +17,14 @@ from typing import List
 
 from .utils import get_query
 from .utils import get_week_bounds
+from .utils import get_track_info
+from .utils import TrackInfo
 from ._constants import BadgeName
 from ._constants import PUBLIC_TRANSPORTS
 from ._constants import SUSTAINABLE_TRANSPORTS
 from ._constants import VehicleType
 
 logger = logging.getLogger(__name__)
-
-TrackInfo = namedtuple("TrackInfo", [
-    "id",
-    "created_at",
-    "owner_id",
-    "aggregated_costs",
-    "aggregated_emissions",
-    "aggregated_health",
-    "duration",
-    "start_date",
-    "end_date",
-    "length",
-    "segments",
-])
 
 BadgeInfo = namedtuple("BadgeInfo", [
     "id",
@@ -59,6 +47,8 @@ def update_badges(track_id: int, db_connection):
     with db_connection:  # changes are committed when `with` block exits
         with db_connection.cursor() as cursor:
             track_info = get_track_info(track_id, cursor)
+            if not track_info.is_valid:
+                raise RuntimeError("Track {} is not valid".format(track_id))
             badges_info = get_badges_info(track_info.owner_id, cursor)
             not_acquired = (b for b in badges_info if not b.acquired)
             to_ignore = (b for b in badges_info if b.name in UNHANDLED_BADGES)
@@ -252,18 +242,6 @@ def get_badges_info(user_id: int, db_cursor) -> List[BadgeInfo]:
             )
         )
     return result
-
-
-def get_track_info(track_id, db_cursor) -> TrackInfo:
-    db_cursor.execute(
-        get_query("select-track.sql"),
-        {"track_id": track_id}
-    )
-    row = db_cursor.fetchone()
-    if row is not None:
-        return TrackInfo(*row)
-    else:
-        raise RuntimeError("Invalid track id: {!r}".format(track_id))
 
 
 def uses_vehicle_type(segments_info: List[dict], *vehicle_types: VehicleType):

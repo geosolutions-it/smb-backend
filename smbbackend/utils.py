@@ -9,6 +9,7 @@
 #########################################################################
 
 import calendar
+from collections import namedtuple
 import datetime as dt
 import logging
 import os
@@ -17,6 +18,24 @@ import pathlib
 import psycopg2
 
 logger = logging.getLogger(__name__)
+
+
+TrackInfo = namedtuple("TrackInfo", [
+    "id",
+    "created_at",
+    "owner_id",
+    "aggregated_costs",
+    "aggregated_emissions",
+    "aggregated_health",
+    "duration",
+    "start_date",
+    "end_date",
+    "length",
+    "is_valid",
+    "validation_error",
+    "segments",
+])
+
 
 
 def get_db_connection(dbname, user, password, host="localhost", port="5432"):
@@ -46,4 +65,15 @@ def get_week_bounds(day: dt.datetime):
                                 microsecond=9999)
     return first, last
 
+
+def get_track_info(track_id, db_cursor) -> TrackInfo:
+    db_cursor.execute(
+        get_query("select-track.sql"),
+        {"track_id": track_id}
+    )
+    row = db_cursor.fetchone()
+    if row is not None:
+        return TrackInfo(*row)
+    else:
+        raise RuntimeError("Invalid track id: {!r}".format(track_id))
 

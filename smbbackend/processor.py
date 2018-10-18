@@ -25,6 +25,7 @@ import pytz
 
 from ._constants import VehicleType
 from .utils import get_query
+from .exceptions import NonRecoverableError
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ DATA_PROCESSING_PARAMETERS = {
         VehicleType.bus: 500,
         VehicleType.train: 1000,
     },
-    "segments_minute_threshold": 5,
+    "segments_minute_threshold": 20,
     "segments_temporal_lower_bound": dt.datetime(2018, 1, 1, tzinfo=pytz.utc),
     "segments_temporal_upper_bound": dt.datetime.now(pytz.utc),
     "segments_small_threshold": 1,
@@ -154,25 +155,33 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, db_cursor):
     try:
         track_owner = get_track_owner_uuid(object_key)
     except AttributeError:
-        raise RuntimeError(
+        raise NonRecoverableError(
             "Could not determine track owner for object {}".format(object_key))
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
-    segments = process_data(
-        raw_data, db_cursor, **DATA_PROCESSING_PARAMETERS)
-    save_track(segments, track_owner, db_cursor)
+    points = parse_point_raw_data(raw_data)
+    session_id = get_session_id(points)
+    segments, validation_errors = process_data(
+        points,
+        db_cursor,
+        raise_on_invalid_data=False,
+        **DATA_PROCESSING_PARAMETERS
+    )
+    save_track(session_id, segments, track_owner, validation_errors, db_cursor)
 
 
-def save_track(segments: FullSegmentData, owner: str, db_cursor):
-    session_id = segments[0][0][0].session_id
+def save_track(session_id, segments: FullSegmentData, owner: str,
+               validation_errors, db_cursor):
     owner_internal_id = get_track_owner_internal_id(owner, db_cursor)
-    track_id = insert_track(session_id, owner_internal_id, db_cursor)
+    track_id = insert_track(session_id, owner_internal_id, validation_errors,
+                            db_cursor)
     insert_points(track_id, segments, db_cursor)
     insert_segments(track_id, segments, owner, db_cursor)
     return track_id
 
 
-def insert_track(session_id: int, owner: int, db_cursor) -> int:
+def insert_track(session_id: int, owner: int, validation_errors: List,
+                 db_cursor) -> int:
     """Insert track data into the main database"""
     query = get_query("insert-track.sql")
     db_cursor.execute(
@@ -180,7 +189,9 @@ def insert_track(session_id: int, owner: int, db_cursor) -> int:
         {
             "owner_id": owner,
             "session_id": session_id,
-            "created_at": dt.datetime.now(pytz.utc)
+            "created_at": dt.datetime.now(pytz.utc),
+            "is_valid": True if len(validation_errors) == 0 else False,
+            "validation_error": ", ".join(validation_errors)
         }
     )
     track_id = db_cursor.fetchone()[0]
@@ -223,7 +234,13 @@ def insert_segments(track_id: int, segments: FullSegmentData, owner: str,
     return segment_ids
 
 
-def process_data(raw_data, db_cursor, **settings) -> FullSegmentData:
+def get_session_id(parsed_points: List[PointData]):
+    return parsed_points[0].session_id
+
+
+def process_data(points: List[PointData], db_cursor,
+                 raise_on_invalid_data=True,
+                 **settings) -> Tuple[FullSegmentData, List]:
     """Process the raw collected points into segments
 
     The following operations are performed on the raw data:
@@ -237,12 +254,17 @@ def process_data(raw_data, db_cursor, **settings) -> FullSegmentData:
 
     """
 
-    logger.info("parsing raw data...")
-    point_data = parse_point_raw_data(raw_data)
-    validate_points(point_data)  # might raise RuntimeError
+    errors = []
+    try:
+        validate_points(points)
+    except RuntimeError as exc:
+        logger.exception("point validation failed")
+        errors.append(exc.args[0])
+        if raise_on_invalid_data:
+            raise
     coordinate_transformer = get_coordinate_transformer()
     filtered_points = filter_point_data(
-        point_data,
+        points,
         coordinate_transformer,
         position_threshold=settings["points_position_threshold"]
     )
@@ -259,13 +281,19 @@ def process_data(raw_data, db_cursor, **settings) -> FullSegmentData:
         db_cursor=db_cursor,
         small_segments_threshold=settings["segments_small_threshold"]
     )
-    # might raise RuntimeError
-    validate_segments(filtered_segments, coordinate_transformer, **settings)
+    try:
+        validate_segments(
+            filtered_segments, coordinate_transformer, **settings)
+    except RuntimeError as exc:
+        logger.exception("Segment validation failed")
+        errors.append(exc.args[0])
+        if raise_on_invalid_data:
+            raise
     result = []
     for segment in filtered_segments:
         info = get_segment_info(segment, coordinate_transformer)
         result.append((segment, info))
-    return result
+    return result, errors
 
 
 def get_data_from_s3(bucket_name: str, object_key: str,
@@ -367,9 +395,9 @@ def validate_points(points: List[PointData]):
     """Make sure parsed points are valid"""
     session_ids = set(pt.session_id for pt in points)
     if len(points) == 0:
-        raise RuntimeError("There are no valid points in input data")
+        raise NonRecoverableError("There are no valid points in input data")
     elif len(session_ids) != 1:
-        raise RuntimeError(
+        raise NonRecoverableError(
             "Multiple session identifiers present in input data")
 
 
@@ -402,13 +430,23 @@ def generate_segments(points: List[PointData], transformer,
         too_far_away = last_distance > distance_thresholds[pt.vehicle_type]
 
         if vehicle_changed:
-            logger.debug("vehicle type changed, starting new segment...")
+            logger.debug(
+                "point: {} last_point: {} - vehicle type changed, starting "
+                "new segment...".format(pt, last_point)
+            )
             start_new_segment = True
         elif too_much_time_passed:
-            logger.debug("too much time has passed, starting new segment...")
+            logger.debug(
+                "point: {} last_point: {} minutes_passed: {} - too much time "
+                "has passed, starting new segment...".format(
+                    pt, last_point, minutes_passed)
+            )
             start_new_segment = True
         elif too_far_away:
-            logger.debug("too far away, starting new segment...")
+            logger.debug(
+                "point: {} last_point: {} last_distance: {}  - too far away, "
+                "starting new segment...".format(pt, last_point, last_distance)
+            )
             start_new_segment = True
         else:
             start_new_segment = False
@@ -651,38 +689,46 @@ def validate_segment(segment: List[PointData], info: SegmentInfo, **settings):
 
 def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
     avg_threshold, max_threshold = speed_thresholds[segment_info.vehicle_type]
+    error_message = (
+        "Segment's {speed_type} speed ({speed:0.1f} m/s) is too high for a "
+        "vehicle of type {vehicle!r}"
+    )
     if segment_info.average_speed > avg_threshold:
-        raise RuntimeError(
-            "Segment's average speed {} is too high for a {}".format(
-                segment_info.average_speed, segment_info.vehicle_type.name)
+        raise RuntimeError(error_message.format(
+            speed_type="average",
+            speed=segment_info.average_speed,
+            vehicle=segment_info.vehicle_type.name)
         )
     if segment_info.max_speed > max_threshold:
-        raise RuntimeError(
-            "Segment's max speed {} is too high for a {}".format(
-                segment_info.max_speed, segment_info.vehicle_type.name)
+        raise RuntimeError(error_message.format(
+            speed_type="max",
+            speed=segment_info.max_speed,
+            vehicle=segment_info.vehicle_type.name)
         )
 
 
 def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
     if segment_info.length > length_thresholds[segment_info.vehicle_type]:
         raise RuntimeError(
-            "Segment is too big {} for a {}".format(
-                segment_info.length, segment_info.vehicle_type.name)
+            "Segment is too big ({:0.1f} meters) for a vehicle of "
+            "type {!r}".format(segment_info.length,
+                               segment_info.vehicle_type.name)
         )
 
 
 def validate_segment_duration(segment_info: SegmentInfo, duration_thresholds):
     if segment_info.duration > duration_thresholds[segment_info.vehicle_type]:
         raise RuntimeError(
-            "Segment lasts for too long {} for a {}".format(
-                segment_info.duration, segment_info.vehicle_type.name)
+            "Segment lasts for too long ({:0.1f} seconds) for a vehicle of "
+            "type {!r}".format(segment_info.duration,
+                               segment_info.vehicle_type.name)
         )
 
 
 def validate_segments(segments: SegmentData, coordinate_transformer,
                       **settings):
     if len(segments) == 0:
-        raise RuntimeError("No valid segments")
+        raise NonRecoverableError("No valid segments")
     else:
         for segment in segments:
             info = get_segment_info(segment, coordinate_transformer)

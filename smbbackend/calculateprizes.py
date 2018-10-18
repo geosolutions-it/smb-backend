@@ -18,6 +18,7 @@ from collections import namedtuple
 from functools import partial
 from itertools import product
 import datetime as dt
+import json
 import logging
 from typing import List
 from typing import Tuple
@@ -66,6 +67,18 @@ def calculate_prizes(db_connection):
                 leaderboard = get_leaderboard(competition, cursor)
                 winners = select_competition_winners(competition, leaderboard)
                 assign_competition_winners(winners, competition.id, cursor)
+                close_competition(competition, leaderboard, cursor)
+
+
+def close_competition(competition, leaderboard, db_cursor):
+    """Save the closing leaderboard in the competition's DB entry"""
+    db_cursor.execute(
+        get_query("update-competition-leaderboard.sql"),
+        {
+            "leaderboard": json.dumps(leaderboard),
+            "competition_id": json.dumps(competition.id),
+        }
+    )
 
 
 def get_open_competitions(db_cursor) -> List[CompetitionInfo]:
@@ -166,7 +179,7 @@ def consolidate_leaderboards(
         board_points = board.get(participant, null_competitor).points
         board_score = board.get(participant, null_competitor).absolute_score
         final_leaderboard[participant]["points"] += board_points
-        final_leaderboard[participant]["boards"][criterium] = board_score
+        final_leaderboard[participant]["boards"][criterium.name] = board_score
     score_divisor = sum(len(board) for board in leaderboards)
     total = []
     for user_id, data in final_leaderboard.items():

@@ -18,6 +18,7 @@ import pathlib
 from . import _constants
 from ._constants import VehicleType
 from .utils import get_query
+from .utils import get_track_info
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,9 @@ SegmentInfo = namedtuple("SegmentInfo", [
 def calculate_indexes(track_id: str, db_connection):
     with db_connection:  # changes are committed when `with` block exits
         with db_connection.cursor() as cursor:
+            track_info = get_track_info(track_id, cursor)
+            if not track_info.is_valid:
+                raise RuntimeError("Track {} is not valid".format(track_id))
             segments_info = get_segments_info(track_id, cursor)
             for index, info in enumerate(segments_info):
                 emissions = calculate_emissions(
@@ -101,7 +105,7 @@ def get_segments_info(track_id, db_cursor):
     )
     result = []
     for row in db_cursor.fetchall():
-        logger.info("row: {}".format(row))
+        logger.debug("row: {}".format(row))
         segment_id, vehicle_type, length_meters, duration = row
         length_km = length_meters / 1000
         duration_hours = (
@@ -109,7 +113,7 @@ def get_segments_info(track_id, db_cursor):
             duration.seconds / (60 * 60) +
             duration.microseconds / (1000 * 1000 * 60 * 60)
         )
-        logger.info("duration_hours: {}".format(duration_hours))
+        logger.debug("duration_hours: {}".format(duration_hours))
         avg_speed = length_km / duration_hours  # km/h
         result.append(
             SegmentInfo(

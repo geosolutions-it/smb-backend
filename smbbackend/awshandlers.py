@@ -110,6 +110,7 @@ def competitions_handler(notify_completion=True):
         _publish_message(SNS_TOPIC, MessageType.competitions_updated)
 
 
+# TODO: Refactor this in order to use the new ingestion
 def handle_track_ingestion(bucket_name, object_key, notify_completion=True):
     track_id = ingest_s3_data(
         s3_bucket_name=bucket_name,

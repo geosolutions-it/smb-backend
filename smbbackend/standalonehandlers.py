@@ -32,10 +32,10 @@ import os
 from pathlib import Path
 
 # from .ingesttracks import ingest_data
+from . import processor
 from .processor import DATA_PROCESSING_PARAMETERS
-from .processor import process_data
-from .processor import save_track
 from . import calculateindexes
+from .exceptions import NonRecoverableError
 from . import updatebadges
 from . import utils
 
@@ -81,22 +81,34 @@ def main():
             logger.info("Ingesting file {}...".format(item.name))
             with item.open() as fh:
                 csv_contents = fh.read()
-            try:
-                with connection as conn:
-                    with conn.cursor() as cursor:
-                        segments = process_data(
-                            csv_contents, cursor, **DATA_PROCESSING_PARAMETERS)
-                        track_id = save_track(
-                            segments, args.owner_uuid, cursor)
-            except RuntimeError:
-                logger.exception(
-                    "Could not process file {!r}".format(item.name))
-            else:
-                # TODO: do not calculate indexes for invalid tracks
+            parsed_points = processor.parse_point_raw_data(csv_contents)
+            session_id = processor.get_session_id(parsed_points)
+            with connection as conn:
+                with conn.cursor() as cursor:
+                    try:
+                        segments, errors = processor.process_data(
+                            parsed_points,
+                            cursor,
+                            raise_on_invalid_data=False,
+                            **DATA_PROCESSING_PARAMETERS
+                        )
+                    except NonRecoverableError:
+                        logger.exception(
+                            "Could not process item {}".format(item))
+                        continue
+                    track_id = processor.save_track(
+                        session_id, segments, args.owner_uuid, errors, cursor)
+                    track_info = utils.get_track_info(track_id, cursor)
+            if track_info.is_valid:
                 logger.info("Calculating indexes...")
                 calculate_indexes(track_id, connection)
                 logger.info("Updating badges...")
                 update_badges(track_id, connection)
+            else:
+                logger.warning(
+                    "track {} is not valid, so no further calculations have "
+                    "been made. Validation error: {}".format(track_id, errors)
+                )
     logger.info("Done!")
 
 
