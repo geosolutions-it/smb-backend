@@ -48,10 +48,6 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 
 
-def calculate_indexes(track_identifier: int, db_connection):
-    calculateindexes.calculate_indexes(track_identifier, db_connection)
-
-
 def update_badges(track_identifier: int, db_connection):
     updatebadges.update_badges(track_identifier, db_connection)
 
@@ -99,16 +95,17 @@ def main():
                     track_id = processor.save_track(
                         session_id, segments, args.owner_uuid, errors, cursor)
                     track_info = utils.get_track_info(track_id, cursor)
-            if track_info.is_valid:
-                logger.info("Calculating indexes...")
-                calculate_indexes(track_id, connection)
-                logger.info("Updating badges...")
-                update_badges(track_id, connection)
-            else:
-                logger.warning(
-                    "track {} is not valid, so no further calculations have "
-                    "been made. Validation error: {}".format(track_id, errors)
-                )
+                    if track_info.is_valid:
+                        logger.info("Calculating indexes...")
+                        calculateindexes.calculate_indexes(track_id, cursor)
+                        logger.info("Updating badges...")
+                        update_badges(track_id, cursor)
+                    else:
+                        logger.warning(
+                            "track {} is not valid, so no further "
+                            "calculations have been made. Validation "
+                            "errors: {}".format(track_id, errors)
+                        )
     logger.info("Done!")
 
 

@@ -24,8 +24,9 @@ from osgeo import osr
 import pytz
 
 from ._constants import VehicleType
+from . import exceptions
+from . import utils
 from .utils import get_query
-from .exceptions import NonRecoverableError
 
 logger = logging.getLogger(__name__)
 
@@ -150,12 +151,13 @@ class PointData(object):
         return result
 
 
-def ingest_s3_data(s3_bucket_name: str, object_key: str, db_cursor):
+def ingest_s3_data(s3_bucket_name: str, object_key: str,
+                   db_cursor) -> Tuple[int, List[dict]]:
     """Ingest track data into smb database"""
     try:
         track_owner = get_track_owner_uuid(object_key)
     except AttributeError:
-        raise NonRecoverableError(
+        raise exceptions.NonRecoverableError(
             "Could not determine track owner for object {}".format(object_key))
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
@@ -167,11 +169,13 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, db_cursor):
         raise_on_invalid_data=False,
         **DATA_PROCESSING_PARAMETERS
     )
-    save_track(session_id, segments, track_owner, validation_errors, db_cursor)
+    track_id = save_track(
+        session_id, segments, track_owner, validation_errors, db_cursor)
+    return track_id, validation_errors
 
 
 def save_track(session_id, segments: FullSegmentData, owner: str,
-               validation_errors, db_cursor):
+               validation_errors: List[dict], db_cursor):
     owner_internal_id = get_track_owner_internal_id(owner, db_cursor)
     track_id = insert_track(session_id, owner_internal_id, validation_errors,
                             db_cursor)
@@ -180,7 +184,7 @@ def save_track(session_id, segments: FullSegmentData, owner: str,
     return track_id
 
 
-def insert_track(session_id: int, owner: int, validation_errors: List,
+def insert_track(session_id: int, owner: int, validation_errors: List[dict],
                  db_cursor) -> int:
     """Insert track data into the main database"""
     query = get_query("insert-track.sql")
@@ -191,7 +195,8 @@ def insert_track(session_id: int, owner: int, validation_errors: List,
             "session_id": session_id,
             "created_at": dt.datetime.now(pytz.utc),
             "is_valid": True if len(validation_errors) == 0 else False,
-            "validation_error": ", ".join(validation_errors)
+            "validation_error": ", ".join(
+                error["message"] for error in validation_errors)
         }
     )
     track_id = db_cursor.fetchone()[0]
@@ -255,13 +260,7 @@ def process_data(points: List[PointData], db_cursor,
     """
 
     errors = []
-    try:
-        validate_points(points)
-    except RuntimeError as exc:
-        logger.exception("point validation failed")
-        errors.append(exc.args[0])
-        if raise_on_invalid_data:
-            raise
+    validate_points(points)
     coordinate_transformer = get_coordinate_transformer()
     filtered_points = filter_point_data(
         points,
@@ -284,9 +283,14 @@ def process_data(points: List[PointData], db_cursor,
     try:
         validate_segments(
             filtered_segments, coordinate_transformer, **settings)
-    except RuntimeError as exc:
+    except exceptions.RecoverableError as exc:
         logger.exception("Segment validation failed")
-        errors.append(exc.args[0])
+        errors.append({
+            "message": exc.args[0],
+            "variable": exc.args[1],
+            "value": exc.args[2],
+            "vehicle_type": exc.args[3],
+        })
         if raise_on_invalid_data:
             raise
     result = []
@@ -329,7 +333,8 @@ def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
     try:
         return db_cursor.fetchone()[0]
     except TypeError:
-        raise RuntimeError("Could not determine track owner internal ID")
+        raise exceptions.NonRecoverableError(
+            "Could not determine track owner internal ID")
 
 
 def filter_point_data(points: List["PointData"], coordinate_transformer,
@@ -395,9 +400,10 @@ def validate_points(points: List[PointData]):
     """Make sure parsed points are valid"""
     session_ids = set(pt.session_id for pt in points)
     if len(points) == 0:
-        raise NonRecoverableError("There are no valid points in input data")
+        raise exceptions.NonRecoverableError(
+            "There are no valid points in input data")
     elif len(session_ids) != 1:
-        raise NonRecoverableError(
+        raise exceptions.NonRecoverableError(
             "Multiple session identifiers present in input data")
 
 
@@ -592,22 +598,6 @@ def filter_small_segments(segments: SegmentData,
     return [s for s in segments if len(s) > threshold]
 
 
-def _old_reconcile_segments(segments: SegmentData, test_func):
-    result = []
-    for segment in segments:
-        new_segment = []
-        for point in segment:
-            if test_func(point):
-                new_segment.append(point)
-            else:  # discard this point and start a new segment
-                if len(new_segment) > 0:
-                    result.append(new_segment[:])
-                    new_segment.clear()
-        if len(new_segment) > 0:
-            result.append(new_segment)
-    return result
-
-
 def get_region_of_interest(db_cursor):
     db_cursor.execute(get_query("select-region-of-interest.sql"))
     wkb = bytes(db_cursor.fetchone()[0])
@@ -689,46 +679,46 @@ def validate_segment(segment: List[PointData], info: SegmentInfo, **settings):
 
 def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
     avg_threshold, max_threshold = speed_thresholds[segment_info.vehicle_type]
-    error_message = (
-        "Segment's {speed_type} speed ({speed:0.1f} m/s) is too high for a "
-        "vehicle of type {vehicle!r}"
-    )
     if segment_info.average_speed > avg_threshold:
-        raise RuntimeError(error_message.format(
-            speed_type="average",
-            speed=segment_info.average_speed,
-            vehicle=segment_info.vehicle_type.name)
+        raise exceptions.RecoverableError(
+            utils.ValidationError.segment_speed_too_high.name,
+            "average_speed",
+            segment_info.average_speed,
+            segment_info.vehicle_type.name
         )
     if segment_info.max_speed > max_threshold:
-        raise RuntimeError(error_message.format(
-            speed_type="max",
-            speed=segment_info.max_speed,
-            vehicle=segment_info.vehicle_type.name)
+        raise exceptions.RecoverableError(
+            utils.ValidationError.segment_speed_too_high.name,
+            "max_speed",
+            segment_info.max_speed,
+            segment_info.vehicle_type.name
         )
 
 
 def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
     if segment_info.length > length_thresholds[segment_info.vehicle_type]:
-        raise RuntimeError(
-            "Segment is too big ({:0.1f} meters) for a vehicle of "
-            "type {!r}".format(segment_info.length,
-                               segment_info.vehicle_type.name)
+        raise exceptions.RecoverableError(
+            utils.ValidationError.segment_length_too_big.name,
+            "length",
+            segment_info.length,
+            segment_info.vehicle_type.name
         )
 
 
 def validate_segment_duration(segment_info: SegmentInfo, duration_thresholds):
     if segment_info.duration > duration_thresholds[segment_info.vehicle_type]:
-        raise RuntimeError(
-            "Segment lasts for too long ({:0.1f} seconds) for a vehicle of "
-            "type {!r}".format(segment_info.duration,
-                               segment_info.vehicle_type.name)
+        raise exceptions.RecoverableError(
+            utils.ValidationError.segment_duration_too_long,
+            "duration",
+            segment_info.duration,
+            segment_info.vehicle_type.name
         )
 
 
 def validate_segments(segments: SegmentData, coordinate_transformer,
                       **settings):
     if len(segments) == 0:
-        raise NonRecoverableError("No valid segments")
+        raise exceptions.NonRecoverableError("No valid segments")
     else:
         for segment in segments:
             info = get_segment_info(segment, coordinate_transformer)

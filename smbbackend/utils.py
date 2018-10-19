@@ -11,6 +11,7 @@
 import calendar
 from collections import namedtuple
 import datetime as dt
+from enum import Enum
 import logging
 import os
 import pathlib
@@ -35,6 +36,27 @@ TrackInfo = namedtuple("TrackInfo", [
     "validation_error",
     "segments",
 ])
+
+
+class MessageType(Enum):
+    """Message types that are recognized by the various smb components"""
+
+    device_registered = 1
+    s3_received_track = 2
+    track_uploaded = 3
+    track_validated = 4
+    indexes_have_been_calculated = 5
+    badges_have_been_updated = 6
+    badge_won = 7
+    competitions_have_been_updated = 8
+    prize_won = 9
+    unknown = 10
+
+
+class ValidationError(Enum):
+    segment_speed_too_high = 1
+    segment_length_too_big = 2
+    segment_duration_too_long = 3
 
 
 
