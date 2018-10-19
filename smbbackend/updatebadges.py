@@ -17,26 +17,14 @@ from typing import List
 
 from .utils import get_query
 from .utils import get_week_bounds
+from .utils import get_track_info
+from .utils import TrackInfo
 from ._constants import BadgeName
 from ._constants import PUBLIC_TRANSPORTS
 from ._constants import SUSTAINABLE_TRANSPORTS
 from ._constants import VehicleType
 
 logger = logging.getLogger(__name__)
-
-TrackInfo = namedtuple("TrackInfo", [
-    "id",
-    "created_at",
-    "owner_id",
-    "aggregated_costs",
-    "aggregated_emissions",
-    "aggregated_health",
-    "duration",
-    "start_date",
-    "end_date",
-    "length",
-    "segments",
-])
 
 BadgeInfo = namedtuple("BadgeInfo", [
     "id",
@@ -55,17 +43,26 @@ UNHANDLED_BADGES = [
 ]
 
 
-def update_badges(track_id: int, db_connection):
-    with db_connection:  # changes are committed when `with` block exits
-        with db_connection.cursor() as cursor:
-            track_info = get_track_info(track_id, cursor)
-            badges_info = get_badges_info(track_info.owner_id, cursor)
-            not_acquired = (b for b in badges_info if not b.acquired)
-            to_ignore = (b for b in badges_info if b.name in UNHANDLED_BADGES)
-            to_handle = set(not_acquired).difference(set(to_ignore))
-            for badge_info in list(to_handle):
-                logger.debug("handling badge {!r}...".format(badge_info.name))
-                handle_badge(badge_info, track_info, cursor)
+def update_badges(track_id: int, db_cursor):
+    """Update badges taking into account for the input track
+
+    Note that this function does not check for track validity. The caller is
+    responsible for that (if needed)
+
+    """
+
+    track_info = get_track_info(track_id, db_cursor)
+    badges_info = get_badges_info(track_info.owner_id, db_cursor)
+    not_acquired = (b for b in badges_info if not b.acquired)
+    to_ignore = (b for b in badges_info if b.name in UNHANDLED_BADGES)
+    to_handle = set(not_acquired).difference(set(to_ignore))
+    awarded_badges = []
+    for badge_info in list(to_handle):
+        logger.debug("handling badge {!r}...".format(badge_info.name))
+        badge_awarded = handle_badge(badge_info, track_info, db_cursor)
+        if badge_awarded:
+            awarded_badges.append(badge_info.name)
+    return awarded_badges
 
 
 def handle_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
@@ -100,9 +97,12 @@ def handle_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
         BadgeName.tpl_surfer_level3: handle_distance_based_badge,
     }[badge.name]
     current_progress = handler(badge, track, db_cursor)
+    badge_awarded = False
     if current_progress >= badge.target:
         logger.debug("Awarding badge {!r}".format(badge.name))
         award_badge(badge.id, db_cursor)
+        badge_awarded = True
+    return badge_awarded
 
 
 def handle_data_collector_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
@@ -252,18 +252,6 @@ def get_badges_info(user_id: int, db_cursor) -> List[BadgeInfo]:
             )
         )
     return result
-
-
-def get_track_info(track_id, db_cursor) -> TrackInfo:
-    db_cursor.execute(
-        get_query("select-track.sql"),
-        {"track_id": track_id}
-    )
-    row = db_cursor.fetchone()
-    if row is not None:
-        return TrackInfo(*row)
-    else:
-        raise RuntimeError("Invalid track id: {!r}".format(track_id))
 
 
 def uses_vehicle_type(segments_info: List[dict], *vehicle_types: VehicleType):

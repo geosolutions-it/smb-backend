@@ -9,6 +9,8 @@ SELECT
   t.start_date,
   t.end_date,
   t.length,
+  t.is_valid,
+  t.validation_error,
   json_agg(
     json_build_object(
       'id', s.id,
@@ -17,7 +19,7 @@ SELECT
     )
   ) AS segments
 FROM tracks_track AS t
-  JOIN tracks_segment as s ON (t.id = s.track_id)
+  LEFT JOIN tracks_segment as s ON (t.id = s.track_id)
 WHERE t.id = %(track_id)s
 GROUP BY
   t.id,

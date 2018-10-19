@@ -11,6 +11,7 @@ FROM tracks_segment AS s
 WHERE s.start_date >= %(start_date)s
   AND s.end_date <= %(end_date)s
   AND p.age = ANY(%(age_groups)s)
+  AND t.is_valid = true
 GROUP BY
   u.id,
   p.age

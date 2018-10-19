@@ -12,8 +12,6 @@
 
 from collections import namedtuple
 import logging
-import os
-import pathlib
 
 from . import _constants
 from ._constants import VehicleType
@@ -57,20 +55,25 @@ SegmentInfo = namedtuple("SegmentInfo", [
 ])
 
 
-def calculate_indexes(track_id: str, db_connection):
-    with db_connection:  # changes are committed when `with` block exits
-        with db_connection.cursor() as cursor:
-            segments_info = get_segments_info(track_id, cursor)
-            for index, info in enumerate(segments_info):
-                emissions = calculate_emissions(
-                    info.vehicle_type, info.length_km)
-                costs = calculate_costs(
-                    info.vehicle_type, info.length_km, info.duration_hours)
-                duration_minutes = info.duration_hours * 60
-                health = calculate_health(
-                    info.vehicle_type, duration_minutes, info.speed_km_h)
-                insert_segment_data(info.id, emissions, costs, health, cursor)
-            update_track_aggregated_data(track_id, cursor)
+def calculate_indexes(track_id: str, db_cursor):
+    """Calculate indexes for the input track
+
+    Note that this function does not check for track validity. The caller is
+    responsible for that (if needed)
+
+    """
+
+    segments_info = get_segments_info(track_id, db_cursor)
+    for index, info in enumerate(segments_info):
+        emissions = calculate_emissions(
+            info.vehicle_type, info.length_km)
+        costs = calculate_costs(
+            info.vehicle_type, info.length_km, info.duration_hours)
+        duration_minutes = info.duration_hours * 60
+        health = calculate_health(
+            info.vehicle_type, duration_minutes, info.speed_km_h)
+        insert_segment_data(info.id, emissions, costs, health, db_cursor)
+    update_track_aggregated_data(track_id, db_cursor)
 
 
 def update_track_aggregated_data(track_id, db_cursor):
@@ -101,11 +104,15 @@ def get_segments_info(track_id, db_cursor):
     )
     result = []
     for row in db_cursor.fetchall():
-        logger.info("row: {}".format(row))
+        logger.debug("row: {}".format(row))
         segment_id, vehicle_type, length_meters, duration = row
         length_km = length_meters / 1000
-        duration_hours = duration.days * 24 + duration.seconds / (60 * 60)
-        logger.info("duration_hours: {}".format(duration_hours))
+        duration_hours = (
+            duration.days * 24 +
+            duration.seconds / (60 * 60) +
+            duration.microseconds / (1000 * 1000 * 60 * 60)
+        )
+        logger.debug("duration_hours: {}".format(duration_hours))
         avg_speed = length_km / duration_hours  # km/h
         result.append(
             SegmentInfo(

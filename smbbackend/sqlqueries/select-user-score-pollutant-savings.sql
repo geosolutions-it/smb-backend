@@ -7,3 +7,4 @@ FROM tracks_segment AS s
 WHERE s.start_date >= %(start_date)s
   AND s.end_date <= %(end_date)s
   AND u.id = %(user_id)s
+  AND t.is_valid = true

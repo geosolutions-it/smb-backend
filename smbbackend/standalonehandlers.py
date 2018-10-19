@@ -31,8 +31,11 @@ import logging
 import os
 from pathlib import Path
 
-from .ingesttracks import ingest_data
+# from .ingesttracks import ingest_data
+from . import processor
+from .processor import DATA_PROCESSING_PARAMETERS
 from . import calculateindexes
+from .exceptions import NonRecoverableError
 from . import updatebadges
 from . import utils
 
@@ -43,10 +46,6 @@ DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
-
-
-def calculate_indexes(track_identifier: int, db_connection):
-    calculateindexes.calculate_indexes(track_identifier, db_connection)
 
 
 def update_badges(track_identifier: int, db_connection):
@@ -75,16 +74,38 @@ def main():
         DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT)
     for item in (Path(i).expanduser().resolve() for i in args.csv_path):
         if item.is_file():
+            logger.info("Ingesting file {}...".format(item.name))
             with item.open() as fh:
-                logger.info("Ingesting file {}...".format(item.name))
                 csv_contents = fh.read()
-                track_id = ingest_data(
-                    args.owner_uuid, csv_contents, connection)
-                if track_id is not None:
-                    logger.info("Calculating indexes...")
-                    calculate_indexes(track_id, connection)
-                    logger.info("Updating badges...")
-                    update_badges(track_id, connection)
+            parsed_points = processor.parse_point_raw_data(csv_contents)
+            session_id = processor.get_session_id(parsed_points)
+            with connection as conn:
+                with conn.cursor() as cursor:
+                    try:
+                        segments, errors = processor.process_data(
+                            parsed_points,
+                            cursor,
+                            raise_on_invalid_data=False,
+                            **DATA_PROCESSING_PARAMETERS
+                        )
+                    except NonRecoverableError:
+                        logger.exception(
+                            "Could not process item {}".format(item))
+                        continue
+                    track_id = processor.save_track(
+                        session_id, segments, args.owner_uuid, errors, cursor)
+                    track_info = utils.get_track_info(track_id, cursor)
+                    if track_info.is_valid:
+                        logger.info("Calculating indexes...")
+                        calculateindexes.calculate_indexes(track_id, cursor)
+                        logger.info("Updating badges...")
+                        update_badges(track_id, cursor)
+                    else:
+                        logger.warning(
+                            "track {} is not valid, so no further "
+                            "calculations have been made. Validation "
+                            "errors: {}".format(track_id, errors)
+                        )
     logger.info("Done!")
 
 

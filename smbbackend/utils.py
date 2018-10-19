@@ -9,7 +9,9 @@
 #########################################################################
 
 import calendar
+from collections import namedtuple
 import datetime as dt
+from enum import Enum
 import logging
 import os
 import pathlib
@@ -17,6 +19,45 @@ import pathlib
 import psycopg2
 
 logger = logging.getLogger(__name__)
+
+
+TrackInfo = namedtuple("TrackInfo", [
+    "id",
+    "created_at",
+    "owner_id",
+    "aggregated_costs",
+    "aggregated_emissions",
+    "aggregated_health",
+    "duration",
+    "start_date",
+    "end_date",
+    "length",
+    "is_valid",
+    "validation_error",
+    "segments",
+])
+
+
+class MessageType(Enum):
+    """Message types that are recognized by the various smb components"""
+
+    device_registered = 1
+    s3_received_track = 2
+    track_uploaded = 3
+    track_validated = 4
+    indexes_have_been_calculated = 5
+    badges_have_been_updated = 6
+    badge_won = 7
+    competitions_have_been_updated = 8
+    prize_won = 9
+    unknown = 10
+
+
+class ValidationError(Enum):
+    segment_speed_too_high = 1
+    segment_length_too_big = 2
+    segment_duration_too_long = 3
+
 
 
 def get_db_connection(dbname, user, password, host="localhost", port="5432"):
@@ -46,4 +87,15 @@ def get_week_bounds(day: dt.datetime):
                                 microsecond=9999)
     return first, last
 
+
+def get_track_info(track_id, db_cursor) -> TrackInfo:
+    db_cursor.execute(
+        get_query("select-track.sql"),
+        {"track_id": track_id}
+    )
+    row = db_cursor.fetchone()
+    if row is not None:
+        return TrackInfo(*row)
+    else:
+        raise RuntimeError("Invalid track id: {!r}".format(track_id))
 

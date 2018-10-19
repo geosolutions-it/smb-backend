@@ -8,21 +8,21 @@
 #
 #########################################################################
 
-"""AWS lambda handler for the `smbbackend.ingesttracks:ingest_tracks function
-"""
+"""AWS lambda handlers"""
 
-from enum import Enum
 import json
 import logging
 import os
 
 import boto3
 
-from .ingesttracks import ingest_s3_data
-from .calculateindexes import calculate_indexes
-from .updatebadges import update_badges
-from .calculateprizes import calculate_prizes
+from . import calculateindexes
+from . import processor
+from . import updatebadges
+from . import calculateprizes
+from .exceptions import NonRecoverableError
 from . import utils
+from .utils import MessageType
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,8 @@ SNS_TOPIC = os.getenv("SNS_TOPIC")
 USE_SYNCHRONOUS_EXECUTION = os.getenv("SYNCHRONOUS_EXECUTION", "").lower()
 
 
-class MessageType(Enum):
-    track_points_saved = 1
-    track_ingested = 2
-    indexes_calculated = 3
-    badges_updated = 4
-    competitions_updated = 5
-    unknown = 6
-
-
 def aws_track_handler(event: dict, context):
-    """Handler for lambda invocations that triggers when a track is generated
+    """Handler for lambda invocations
 
     This handler is called whenever an SNS notification is published on the
     relevant topic
@@ -62,23 +53,30 @@ def aws_track_handler(event: dict, context):
     else:
         handler = modular_track_handler
     logger.info("handler: {}".format(handler))
-    return handler(message_type, message_arguments)
+    with _get_db_connection() as connection:
+        with connection.cursor() as cursor:
+            return handler(message_type, message_arguments, cursor)
 
 
 def compact_track_handler(message_type:MessageType, message_arguments: dict,
-                          notify=True):
+                          db_cursor, notify=True):
     """Handler for track-related stuff that does everything"""
-    if message_type == MessageType.track_points_saved:
-        track_id = handle_track_ingestion(notify_completion=notify,
-                                          **message_arguments)
-        if track_id is not None:
-            handle_indexes_calculations(track_id, notify_completion=notify)
-            handle_badges_update(track_id, notify_completion=notify)
+
+    if message_type == MessageType.s3_received_track:
+        notify_new_track_available(
+            notify_completion=notify, **message_arguments)
+        track_id, validation_errors = ingest_track(
+            db_cursor, notify_completion=notify, **message_arguments)
+        is_valid = len(validation_errors) == 0
+        if len(validation_errors) == 0:
+            calculate_indexes(db_cursor, track_id, notify_completion=notify)
+            update_badges(db_cursor, track_id, notify_completion=notify)
     else:
         logger.info("Ignoring message {!r}...".format(message_type.name))
 
 
-def modular_track_handler(message_type:MessageType, message_arguments: dict):
+def modular_track_handler(message_type:MessageType, message_arguments: dict,
+                          db_cursor):
     """Handler for track-related stuff that does a single task
 
     When the execution of each task is completed, a new SNS message is
@@ -89,55 +87,94 @@ def modular_track_handler(message_type:MessageType, message_arguments: dict):
 
     notify = True
     handler = {
-        MessageType.track_points_saved: handle_track_ingestion,
-        MessageType.track_ingested: handle_indexes_calculations,
-        MessageType.indexes_calculated: handle_badges_update,
-        MessageType.badges_updated: None  # a handler to notify the app
+        MessageType.s3_received_track: notify_new_track_available,
+        MessageType.track_uploaded: ingest_track,
+        MessageType.track_validated: calculate_indexes,
+        MessageType.indexes_have_been_calculated: update_badges,
+        MessageType.badges_have_been_updated: None  # a handler to notify the app
     }.get(message_type)
     logger.info("message_type: {}".format(message_type))
     logger.info("handler: {}".format(handler))
     if handler is not None:
-        handler(notify_completion=notify, **message_arguments)
+        handler(db_cursor, notify_completion=notify, **message_arguments)
     else:
         logger.info(
             "Could not handle message of type {!r}".format(message_type.name))
 
 
-def competitions_handler(notify_completion=True):
-    db_connection = _get_db_connection()
-    calculate_prizes(db_connection)
+def notify_new_track_available(notify_completion=True, db_cursor=None,
+                               **message_arguments):
+    """Forward S3 message to both SNS and mobile apps.
+
+    This function grabs the notification sent by S3 and passes it through our
+    own wrapper, which is able to relay notifications to S3 and also to mobile
+    apps via Firebase Cloud Messaging.
+
+    """
+
+    _publish_message(
+        SNS_TOPIC, MessageType.track_uploaded, **message_arguments)
+
+
+# TODO: Send a notification for all winners of all closed competitions
+def update_competitions(db_cursor, notify_completion=True):
+    calculateprizes.calculate_prizes(db_cursor)
     if notify_completion:
-        _publish_message(SNS_TOPIC, MessageType.competitions_updated)
+        _publish_message(SNS_TOPIC, MessageType.competitions_have_been_updated)
 
 
-def handle_track_ingestion(bucket_name, object_key, notify_completion=True):
-    track_id = ingest_s3_data(
-        s3_bucket_name=bucket_name,
-        object_key=object_key,
-        db_connection=_get_db_connection()
-    )
-    if notify_completion and track_id is not None:
-        _publish_message(
-            SNS_TOPIC, MessageType.track_ingested, track_id=track_id)
-    return track_id
-
-
-def handle_indexes_calculations(track_id, notify_completion=True):
-    calculate_indexes(
-        track_id,
-        _get_db_connection()
-    )
+def ingest_track(db_cursor, bucket_name, object_key, notify_completion=True,
+                 **kwargs):
+    try:
+        track_id, validation_errors = processor.ingest_s3_data(
+            s3_bucket_name=bucket_name,
+            object_key=object_key,
+            db_cursor=db_cursor
+        )
+    except NonRecoverableError as exc:
+        logger.exception("Could not perform track ingestion")
+        track_id = None
+        validation_errors = [{"message": exc.args[0]}]
     if notify_completion:
         _publish_message(
-            SNS_TOPIC, MessageType.indexes_calculated, track_id=track_id)
+            SNS_TOPIC, MessageType.track_validated,
+            track_id=track_id,
+            is_valid=True if len(validation_errors) == 0 else False,
+            validation_errors=validation_errors
+        )
+    return track_id, validation_errors
 
 
-def handle_badges_update(track_id, notify_completion=True):
-    db_connection = _get_db_connection()
-    update_badges(track_id, db_connection)
-    if notify_completion:
-        _publish_message(
-            SNS_TOPIC, MessageType.badges_updated, track_id=track_id)
+def calculate_indexes(db_cursor, track_id, notify_completion=True, **kwargs):
+    track_info = utils.get_track_info(track_id, db_cursor)
+    if not track_info.is_valid:
+        logger.debug(
+            "Track {} is not valid, aborting...".format(track_id))
+    else:
+        calculateindexes.calculate_indexes(track_id, db_cursor)
+        if notify_completion:
+            _publish_message(
+                SNS_TOPIC,
+                MessageType.indexes_have_been_calculated,
+                track_id=track_id
+            )
+
+
+def update_badges(db_cursor, track_id, notify_completion=True, **kwargs):
+    track_info = utils.get_track_info(track_id, db_cursor)
+    if not track_info.is_valid:
+        logger.debug(
+            "Track {} is not valid, aborting...".format(track_id))
+    else:
+        awarded_badges = updatebadges.update_badges(track_id, db_cursor)
+        if notify_completion:
+            _publish_message(
+                SNS_TOPIC, MessageType.badges_have_been_updated,
+                track_id=track_id
+            )
+            for badge_name in awarded_badges:
+                _publish_message(
+                    SNS_TOPIC, MessageType.badge_won, badge_name=badge_name)
 
 
 def _extract_sns_message(event: dict) -> dict:
@@ -162,7 +199,7 @@ def _get_db_connection():
 def _parse_message(message):
     s3_info = message.get("Records", [{}])[0].get("s3")
     if s3_info:
-        message_type = MessageType.track_points_saved
+        message_type = MessageType.s3_received_track
         try:
             message_arguments = {
                 "bucket_name": s3_info["bucket"]["name"],
