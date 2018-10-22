@@ -35,6 +35,17 @@ SNS_TOPIC = os.getenv("SNS_TOPIC")
 USE_SYNCHRONOUS_EXECUTION = os.getenv("SYNCHRONOUS_EXECUTION", "").lower()
 
 
+# TODO: Send a notification for all winners of all closed competitions
+def update_competitions(notify_completion=True):
+    """Handler for periodically updating competitions"""
+    _setup_logging()
+    with _get_db_connection() as connection:
+        with connection.cursor() as cursor:
+            calculateprizes.calculate_prizes(cursor)
+    if notify_completion:
+        _publish_message(SNS_TOPIC, MessageType.competitions_have_been_updated)
+
+
 def aws_track_handler(event: dict, context):
     """Handler for lambda invocations
 
@@ -114,13 +125,6 @@ def notify_new_track_available(notify_completion=True, db_cursor=None,
 
     _publish_message(
         SNS_TOPIC, MessageType.track_uploaded, **message_arguments)
-
-
-# TODO: Send a notification for all winners of all closed competitions
-def update_competitions(db_cursor, notify_completion=True):
-    calculateprizes.calculate_prizes(db_cursor)
-    if notify_completion:
-        _publish_message(SNS_TOPIC, MessageType.competitions_have_been_updated)
 
 
 def ingest_track(db_cursor, bucket_name, object_key, notify_completion=True,

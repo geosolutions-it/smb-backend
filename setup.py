@@ -21,7 +21,6 @@ setup(
     include_package_data=True,
     install_requires=[
         "boto3==1.9.0",
-        "GDAL",
         "psycopg2-binary==2.7.5",
         "pytz==2018.5",
         "zappa==0.46.2",
