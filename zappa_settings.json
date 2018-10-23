@@ -13,6 +13,15 @@
         }
       },
       {
+        "function": "smbbackend.awshandlers.aws_track_handler",
+        "event_source": {
+          "arn": "arn:aws:sns:us-west-2:227022658256:smb_backend_production",
+          "events": [
+            "sns:Publish"
+          ]
+        }
+      },
+      {
         "function": "smbbackend.awshandlers.update_competitions",
         "expression": "cron(0 1 * * ? *)"
       }
