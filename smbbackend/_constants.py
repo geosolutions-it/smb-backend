@@ -66,13 +66,13 @@ class BadgeName(Enum):
 
 
 class VehicleType(Enum):
-    foot = 1
-    bike = 2
-    bus = 3
-    car = 4
-    motorcycle = 5
-    train = 6
-    unknown = 7
+    foot = 0
+    bike = 1
+    bus = 2
+    car = 3
+    motorcycle = 4
+    train = 5
+    unknown = 6
 
 
 class Pollutant(Enum):
