@@ -149,6 +149,11 @@ def calculate_emissions(vehicle_type: VehicleType,
                 _constants.AVERAGE_PASSENGER_COUNT[VehicleType.car]
         )
         saved = reference - emitted if vehicle_type != VehicleType.car else 0
+        # We take car as a reference, but it is not always the most pollutant
+        # vehicle type. E.g. riding a motorcycle emmits more CO and PM10 than
+        # a car. For those cases, we set `saved` to zero in order to prevent
+        # showing negative savings.
+        saved = max(saved, 0)
         result.update({
             pollutant.name: emitted,
             "{}_saved".format(pollutant.name): saved
