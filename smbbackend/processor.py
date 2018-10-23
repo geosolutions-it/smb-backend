@@ -321,8 +321,8 @@ def get_data_from_s3(bucket_name: str, object_key: str,
 
 
 def get_track_owner_uuid(object_key: str) -> str:
-    search_obj = re.search(r"cognito/smb/([\w-]{36})", object_key)
-    return search_obj.group(1)
+    search_obj = re.search(r"[\w-]{36}", object_key)
+    return search_obj.group()
 
 
 def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
