@@ -50,26 +50,14 @@ DATA_PROCESSING_PARAMETERS = {
     "segments_speed_thresholds": {  # (average_speed, max_speed), in m/s
         VehicleType.foot: (2.78, 2.78),  # 10km/h , 10 km/h
         VehicleType.bike: (30, 30),  # 108 km/h, 108 km/h
-        VehicleType.motorcycle: (38.89, 52.78),  # 140 km/h, 190 km/h
-        VehicleType.car: (38.89, 52.78),  # 140 km/h, 190 km/h
-        VehicleType.bus: (27.78, 38.89),  # 100 km/h, 140 km/h
-        VehicleType.train: (41.67, 55.56),  # 150 km/h, 200 km/h
     },
     "segments_length_thresholds": {  # expressed in m
         VehicleType.foot: 50000,  # 50 km
         VehicleType.bike: 150000,  # 150 km
-        VehicleType.motorcycle: 300000,  # 300 km
-        VehicleType.car: 300000,  # 300 km
-        VehicleType.bus: 300000,  # 300 km
-        VehicleType.train: 300000,  # 300 km
     },
     "segments_duration_thresholds": {  # expressed in seconds
         VehicleType.foot: 43200,  # 12 hours
         VehicleType.bike: 43200,  # 12 hours
-        VehicleType.motorcycle: 32400,  # 9 hours
-        VehicleType.car: 32400,  # 9 hours
-        VehicleType.bus: 32400,  # 9 hours
-        VehicleType.train: 32400,  # 9 hours
     },
 }
 
@@ -689,13 +677,20 @@ def get_segment_info(segment: List[PointData], coordinate_transformer):
 
 
 def validate_segment(segment: List[PointData], info: SegmentInfo, **settings):
-    validate_segment_speed(info, settings["segments_speed_thresholds"])
-    validate_segment_length(info, settings["segments_length_thresholds"])
-    validate_segment_duration(info, settings["segments_duration_thresholds"])
+    relevant_vehicle_types = [
+        VehicleType.foot,
+        VehicleType.bike
+    ]
+    if info.vehicle_type in relevant_vehicle_types:
+        validate_segment_speed(info, settings["segments_speed_thresholds"])
+        validate_segment_length(info, settings["segments_length_thresholds"])
+        validate_segment_duration(
+            info, settings["segments_duration_thresholds"])
 
 
 def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
-    avg_threshold, max_threshold = speed_thresholds[segment_info.vehicle_type]
+    avg_threshold, max_threshold = speed_thresholds.get(
+        segment_info.vehicle_type, (0, 0))
     if segment_info.average_speed > avg_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_speed_too_high.name,
@@ -713,7 +708,8 @@ def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
 
 
 def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
-    if segment_info.length > length_thresholds[segment_info.vehicle_type]:
+    length_threshold = length_thresholds.get(segment_info.vehicle_type, 0)
+    if segment_info.length > length_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_length_too_big.name,
             "length",
@@ -723,7 +719,8 @@ def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
 
 
 def validate_segment_duration(segment_info: SegmentInfo, duration_thresholds):
-    if segment_info.duration > duration_thresholds[segment_info.vehicle_type]:
+    duration_threshold = duration_thresholds.get(segment_info.vehicle_type, 0)
+    if segment_info.duration > duration_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_duration_too_long,
             "duration",
