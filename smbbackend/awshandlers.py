@@ -58,7 +58,7 @@ def aws_track_handler(event: dict, context):
     message = _extract_sns_message(event)
     message_type, message_arguments = _parse_message(message)
     logger.info("message_type: {}".format(message_type))
-    logger.info("message_arguments: {}".format(message_type))
+    logger.info("message_arguments: {}".format(message_arguments))
     if USE_SYNCHRONOUS_EXECUTION in ["true", "1", "yes"]:
         handler = compact_track_handler
     else:
@@ -200,7 +200,7 @@ def _get_db_connection():
     )
 
 
-def _parse_message(message):
+def _parse_message(message: dict):
     s3_info = message.get("Records", [{}])[0].get("s3")
     if s3_info:
         message_type = MessageType.s3_received_track
