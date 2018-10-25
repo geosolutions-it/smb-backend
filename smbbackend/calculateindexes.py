@@ -82,7 +82,6 @@ def update_track_aggregated_data(track_id, db_cursor):
         "update-track-aggregated-emissions.sql",
         "update-track-aggregated-costs.sql",
         "update-track-aggregated-health.sql",
-        "update-track-info.sql",
     ]
     for query_file in queries:
         db_cursor.execute(get_query(query_file), query_kwargs)

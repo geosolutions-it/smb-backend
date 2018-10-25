@@ -94,6 +94,7 @@ def main():
                         continue
                     track_id = processor.save_track(
                         session_id, segments, args.owner_uuid, errors, cursor)
+                    utils.update_track_info(track_id, cursor)
                     track_info = utils.get_track_info(track_id, cursor)
                     if track_info.is_valid:
                         logger.info("Calculating indexes...")

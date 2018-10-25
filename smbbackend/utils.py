@@ -99,3 +99,9 @@ def get_track_info(track_id, db_cursor) -> TrackInfo:
     else:
         raise RuntimeError("Invalid track id: {!r}".format(track_id))
 
+
+def update_track_info(track_id, db_cursor):
+    db_cursor.execute(
+        get_query("update-track-info.sql"),
+        {"track_id": track_id}
+    )
