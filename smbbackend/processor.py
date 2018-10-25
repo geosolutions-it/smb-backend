@@ -171,6 +171,7 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str,
     )
     track_id = save_track(
         session_id, segments, track_owner, validation_errors, db_cursor)
+    utils.update_track_info(track_id, db_cursor)
     return track_id, validation_errors
 
 
