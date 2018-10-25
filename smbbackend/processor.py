@@ -42,32 +42,22 @@ DATA_PROCESSING_PARAMETERS = {
     },
     "segments_minute_threshold": 20,
     "segments_temporal_lower_bound": dt.datetime(2018, 1, 1, tzinfo=pytz.utc),
-    "segments_temporal_upper_bound": dt.datetime.now(pytz.utc),
+    "segments_temporal_upper_bound": (
+        dt.datetime.now(pytz.utc) + dt.timedelta(days=1)),
     "segments_small_threshold": 1,
     "points_position_threshold": 0.1,
+    "points_accuracy_threshold": 10,
     "segments_speed_thresholds": {  # (average_speed, max_speed), in m/s
-        VehicleType.foot: (1.95, 2.78),  # 7km/h , 10 km/h
+        VehicleType.foot: (2.78, 2.78),  # 10km/h , 10 km/h
         VehicleType.bike: (30, 30),  # 108 km/h, 108 km/h
-        VehicleType.motorcycle: (38.89, 52.78),  # 140 km/h, 190 km/h
-        VehicleType.car: (38.89, 52.78),  # 140 km/h, 190 km/h
-        VehicleType.bus: (27.78, 38.89),  # 100 km/h, 140 km/h
-        VehicleType.train: (41.67, 55.56),  # 150 km/h, 200 km/h
     },
     "segments_length_thresholds": {  # expressed in m
         VehicleType.foot: 50000,  # 50 km
         VehicleType.bike: 150000,  # 150 km
-        VehicleType.motorcycle: 300000,  # 300 km
-        VehicleType.car: 300000,  # 300 km
-        VehicleType.bus: 300000,  # 300 km
-        VehicleType.train: 300000,  # 300 km
     },
     "segments_duration_thresholds": {  # expressed in seconds
         VehicleType.foot: 43200,  # 12 hours
         VehicleType.bike: 43200,  # 12 hours
-        VehicleType.motorcycle: 32400,  # 9 hours
-        VehicleType.car: 32400,  # 9 hours
-        VehicleType.bus: 32400,  # 9 hours
-        VehicleType.train: 32400,  # 9 hours
     },
 }
 
@@ -94,21 +84,23 @@ class PointData(object):
     timestamp: dt.datetime = None
     vehicle_type: VehicleType = None
 
-    def __init__(self, latitude: float, longitude: float,
+    def __init__(self, latitude: float, longitude: float, accuracy: float,
                  timestamp: dt.datetime, vehicle_type: VehicleType,
                  session_id: int):
         self.timestamp = timestamp
         self.vehicle_type = vehicle_type
         self.session_id = session_id
+        self.accuracy = accuracy
         self.geometry = ogr.Geometry(ogr.wkbPoint)
         self.geometry.AddPoint(longitude, latitude)
 
     def __str__(self):
         return (
-            "Point(latitude={}, longitude={}, timestamp={}, session_id={}, "
+            "Point(latitude={}, longitude={}, accuracy={}, timestamp={}, session_id={}, "
             "vehicle_type={})".format(
                 self.latitude,
                 self.longitude,
+                self.accuracy,
                 self.timestamp.isoformat(),
                 self.session_id,
                 self.vehicle_type.name
@@ -124,6 +116,7 @@ class PointData(object):
         return cls(
             latitude=float(info[12]),
             longitude=float(info[13]),
+            accuracy=float(info[3]),
             timestamp=dt.datetime.fromtimestamp(
                 int(info[20]) / 1000).replace(tzinfo=pytz.utc),
             vehicle_type=VehicleType(int(info[21])),
@@ -266,6 +259,7 @@ def process_data(points: List[PointData], db_cursor,
     filtered_points = filter_point_data(
         points,
         coordinate_transformer,
+        accuracy_threshold=settings["points_accuracy_threshold"],
         position_threshold=settings["points_position_threshold"]
     )
     segments = generate_segments(
@@ -339,11 +333,14 @@ def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
 
 
 def filter_point_data(points: List["PointData"], coordinate_transformer,
+                      accuracy_threshold: float,
                       position_threshold: float) -> List["PointData"]:
     """Remove parsed points that have invalid data
 
     Track point collections must obey the following logic:
 
+    - point accuracy must be higher than or equal to the input
+      ``accuracy_threshold`` value;
     - timestamps are always ascending between consecutive points;
     - it is not necessary to keep consecutive points that are too close in
       space to each other
@@ -356,7 +353,9 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
 
     """
 
-    result = [points[0]]
+    result = []
+    if points[0].accuracy <= accuracy_threshold:
+        result.append(points[0])
     for p1_index in range(len(points) - 1):
         p1 = points[p1_index]
         p2 = points[p1_index+1]
@@ -366,6 +365,9 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
         elif position_delta < position_threshold:
             logger.debug(
                 "Removing consecutive point too close to the previous one")
+        elif p2.accuracy > accuracy_threshold:
+            logger.debug(
+                "Removing point with bad accuracy ({} m)".format(p2.accuracy))
         else:
             result.append(p2)
     return result
@@ -472,7 +474,10 @@ def filter_invalid_temporal_points(segments: SegmentData,
         ts = point.timestamp
         result = lower_bound <= ts <= upper_bound
         if not result:
-            logger.debug("Point is outside temporal bounds")
+            logger.debug(
+                "Point is outside temporal bounds {} <= {} <= {}".format(
+                    lower_bound, ts, upper_bound)
+            )
         return result
 
     return _reconcile_segments(segments, test_func=_check_temporal_bounds)
@@ -673,13 +678,20 @@ def get_segment_info(segment: List[PointData], coordinate_transformer):
 
 
 def validate_segment(segment: List[PointData], info: SegmentInfo, **settings):
-    validate_segment_speed(info, settings["segments_speed_thresholds"])
-    validate_segment_length(info, settings["segments_length_thresholds"])
-    validate_segment_duration(info, settings["segments_duration_thresholds"])
+    relevant_vehicle_types = [
+        VehicleType.foot,
+        VehicleType.bike
+    ]
+    if info.vehicle_type in relevant_vehicle_types:
+        validate_segment_speed(info, settings["segments_speed_thresholds"])
+        validate_segment_length(info, settings["segments_length_thresholds"])
+        validate_segment_duration(
+            info, settings["segments_duration_thresholds"])
 
 
 def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
-    avg_threshold, max_threshold = speed_thresholds[segment_info.vehicle_type]
+    avg_threshold, max_threshold = speed_thresholds.get(
+        segment_info.vehicle_type, (0, 0))
     if segment_info.average_speed > avg_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_speed_too_high.name,
@@ -697,7 +709,8 @@ def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
 
 
 def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
-    if segment_info.length > length_thresholds[segment_info.vehicle_type]:
+    length_threshold = length_thresholds.get(segment_info.vehicle_type, 0)
+    if segment_info.length > length_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_length_too_big.name,
             "length",
@@ -707,7 +720,8 @@ def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
 
 
 def validate_segment_duration(segment_info: SegmentInfo, duration_thresholds):
-    if segment_info.duration > duration_thresholds[segment_info.vehicle_type]:
+    duration_threshold = duration_thresholds.get(segment_info.vehicle_type, 0)
+    if segment_info.duration > duration_threshold:
         raise exceptions.RecoverableError(
             utils.ValidationError.segment_duration_too_long,
             "duration",
