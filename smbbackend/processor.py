@@ -149,7 +149,7 @@ class PointData(object):
 
 
 def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
-                   db_cursor) -> Tuple[int, List[dict]]:
+                   db_cursor) -> Tuple[int, int, List[dict]]:
     """Ingest track data into smb database"""
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
@@ -164,7 +164,7 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
     track_id = save_track(
         session_id, segments, owner_uuid, validation_errors, db_cursor)
     utils.update_track_info(track_id, db_cursor)
-    return track_id, validation_errors
+    return track_id, session_id, validation_errors
 
 
 def save_track(session_id, segments: FullSegmentData, owner_uuid: str,

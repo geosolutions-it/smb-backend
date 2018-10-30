@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+from typing import List
 
 from pyfcm import FCMNotification
 
@@ -149,24 +150,28 @@ def get_new_track_info(db_cursor, bucket_name, object_key, **kwargs):
 def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
                  notify_completion=True, **kwargs):
     try:
-        track_id, validation_errors = processor.ingest_s3_data(
+        track_id, session_id, validation_errors = processor.ingest_s3_data(
             s3_bucket_name=bucket_name,
             object_key=object_key,
             owner_uuid=owner_uuid,
             db_cursor=db_cursor
         )
+        flattened_errors = _flatten_validation_errors(validation_errors)
     except NonRecoverableError as exc:
         logger.exception("Could not perform track ingestion")
         track_id = None
+        session_id = None
         validation_errors = [{"message": exc.args[0]}]
+        flattened_errors = validation_errors[0]["message"]
     if notify_completion:
         _send_notification(
             MessageType.track_validated,
             message_payload={
                 "user_uuid": owner_uuid,
                 "track_id": track_id,
-                "is_valid": True,
-                "validation_errors": validation_errors
+                "session_id": session_id,
+                "is_valid": True if len(validation_errors) == 0 else False,
+                "validation_errors": flattened_errors
             },
             use_fcm=True,
             fcm_devices={
@@ -212,10 +217,10 @@ def update_badges(db_cursor, track_id, owner_uuid,
                     "track_id": track_id
                 }
             )
-            for badge_name in awarded_badges:
+            for badge in awarded_badges:
                 _send_notification(
                     MessageType.badge_won,
-                    message_payload={"badge_name": badge_name},
+                    message_payload={"badge_name": badge.name},
                     use_fcm=True,
                     fcm_devices={
                         owner_uuid: get_user_active_devices(
@@ -285,6 +290,17 @@ def get_user_active_devices(db_cursor, user_uuid):
         {"owner_uuid": user_uuid}
     )
     return [row[0] for row in db_cursor.fetchall()]
+
+
+def _flatten_validation_errors(errors: List[dict]):
+    flattened_errors = ""
+    for error in errors:
+        flattened_error = "{} ({}: {} - {})".format(
+            error["message"], error["variable"], error["value"],
+            error["vehicle_type"]
+        )
+        flattened_errors = ",".join((flattened_errors, flattened_error))
+    return flattened_errors
 
 
 def _setup_logging():
