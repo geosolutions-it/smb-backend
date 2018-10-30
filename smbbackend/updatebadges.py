@@ -43,7 +43,7 @@ UNHANDLED_BADGES = [
 ]
 
 
-def update_badges(track_id: int, db_cursor):
+def update_badges(track_id: int, db_cursor) -> List[BadgeName]:
     """Update badges taking into account for the input track
 
     Note that this function does not check for track validity. The caller is
@@ -125,9 +125,11 @@ def handle_data_collector_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
         }
     )
     rows = db_cursor.fetchall()
-    days_with_data_collected = [row[0] for row in rows]
+    comparison_pattern = "%Y-%m-%d"
+    days_with_data_collected = [
+        r[0].strftime(comparison_pattern) for r in rows]
     for day in interval:
-        if day not in days_with_data_collected:
+        if day.strftime(comparison_pattern) not in days_with_data_collected:
             result = 0
             break
     else:
