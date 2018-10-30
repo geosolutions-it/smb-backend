@@ -20,10 +20,10 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        "boto3==1.9.0",
-        "psycopg2-binary==2.7.5",
-        "pyfcm==1.4.5",
-        "pytz==2018.5",
+        "boto3",
+        "psycopg2-binary",
+        "pyfcm",
+        "pytz",
         "zappa",
     ],
     entry_points={
