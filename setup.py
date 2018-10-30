@@ -24,7 +24,6 @@ setup(
         "psycopg2-binary",
         "pyfcm",
         "pytz",
-        "zappa",
     ],
     entry_points={
         "console_scripts": [
