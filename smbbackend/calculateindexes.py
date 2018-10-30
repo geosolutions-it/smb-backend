@@ -223,9 +223,9 @@ def _calculate_costs_public_transportation(vehicle_type: VehicleType,
 
 def _get_fuel_cost(length, vehicle_type):
     try:
-        volume_spent = length * _constants.FUEL_CONSUMPTION[vehicle_type]
+        volume_spent = length * (1 / _constants.FUEL_CONSUMPTION[vehicle_type])
         monetary_cost = volume_spent * _constants.FUEL_PRICE[vehicle_type]
-    except KeyError:
+    except (KeyError, ZeroDivisionError):
         monetary_cost = 0
     return monetary_cost
 
