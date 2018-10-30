@@ -12,13 +12,13 @@ from collections import namedtuple
 import datetime as dt
 import io
 import logging
-import re
 from typing import List
 from typing import Tuple
 from typing import Callable
 import zipfile
 
 import boto3
+from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
 import pytz
@@ -28,6 +28,7 @@ from . import exceptions
 from . import utils
 from .utils import get_query
 
+gdal.UseExceptions()
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +47,7 @@ DATA_PROCESSING_PARAMETERS = {
         dt.datetime.now(pytz.utc) + dt.timedelta(days=1)),
     "segments_small_threshold": 1,
     "points_position_threshold": 0.1,
-    "points_accuracy_threshold": 10,
+    "points_accuracy_threshold": 20,
     "segments_speed_thresholds": {  # (average_speed, max_speed), in m/s
         VehicleType.foot: (2.78, 2.78),  # 10km/h , 10 km/h
         VehicleType.bike: (30, 30),  # 108 km/h, 108 km/h
@@ -85,23 +86,25 @@ class PointData(object):
     vehicle_type: VehicleType = None
 
     def __init__(self, latitude: float, longitude: float, accuracy: float,
-                 timestamp: dt.datetime, vehicle_type: VehicleType,
-                 session_id: int):
+                 speed: float, timestamp: dt.datetime,
+                 vehicle_type: VehicleType, session_id: int):
         self.timestamp = timestamp
         self.vehicle_type = vehicle_type
         self.session_id = session_id
         self.accuracy = accuracy
+        self.speed = speed
         self.geometry = ogr.Geometry(ogr.wkbPoint)
         self.geometry.AddPoint(longitude, latitude)
 
     def __str__(self):
         return (
-            "Point(latitude={}, longitude={}, accuracy={}, timestamp={}, session_id={}, "
-            "vehicle_type={})".format(
+            "Point(latitude={}, longitude={}, accuracy={}, timestamp={}, "
+            "speed={}, session_id={}, vehicle_type={})".format(
                 self.latitude,
                 self.longitude,
                 self.accuracy,
                 self.timestamp.isoformat(),
+                self.speed,
                 self.session_id,
                 self.vehicle_type.name
             )
@@ -119,6 +122,7 @@ class PointData(object):
             accuracy=float(info[3]),
             timestamp=dt.datetime.fromtimestamp(
                 int(info[20]) / 1000).replace(tzinfo=pytz.utc),
+            speed=float(info[18]),
             vehicle_type=VehicleType(int(info[21])),
             session_id=int(info[17])
         )
@@ -144,14 +148,9 @@ class PointData(object):
         return result
 
 
-def ingest_s3_data(s3_bucket_name: str, object_key: str,
+def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
                    db_cursor) -> Tuple[int, List[dict]]:
     """Ingest track data into smb database"""
-    try:
-        track_owner = get_track_owner_uuid(object_key)
-    except AttributeError:
-        raise exceptions.NonRecoverableError(
-            "Could not determine track owner for object {}".format(object_key))
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
     points = parse_point_raw_data(raw_data)
@@ -163,18 +162,18 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str,
         **DATA_PROCESSING_PARAMETERS
     )
     track_id = save_track(
-        session_id, segments, track_owner, validation_errors, db_cursor)
+        session_id, segments, owner_uuid, validation_errors, db_cursor)
     utils.update_track_info(track_id, db_cursor)
     return track_id, validation_errors
 
 
-def save_track(session_id, segments: FullSegmentData, owner: str,
+def save_track(session_id, segments: FullSegmentData, owner_uuid: str,
                validation_errors: List[dict], db_cursor):
-    owner_internal_id = get_track_owner_internal_id(owner, db_cursor)
+    owner_internal_id = get_track_owner_internal_id(owner_uuid, db_cursor)
     track_id = insert_track(session_id, owner_internal_id, validation_errors,
                             db_cursor)
     insert_points(track_id, segments, db_cursor)
-    insert_segments(track_id, segments, owner, db_cursor)
+    insert_segments(track_id, segments, owner_uuid, db_cursor)
     return track_id
 
 
@@ -268,6 +267,8 @@ def process_data(points: List[PointData], db_cursor,
         minute_threshold=settings["segments_minute_threshold"],
         distance_thresholds=settings["segments_distance_thresholds"]
     )
+    logger.debug("number of points inside generated segments: {}".format(
+        [len(s) for s in segments]))
     filtered_segments = apply_segment_filters(
         segments,
         temporal_lower_bound=settings["segments_temporal_lower_bound"],
@@ -315,11 +316,6 @@ def get_data_from_s3(bucket_name: str, object_key: str,
     return result
 
 
-def get_track_owner_uuid(object_key: str) -> str:
-    search_obj = re.search(r"[\w-]{36}", object_key)
-    return search_obj.group()
-
-
 def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
     db_cursor.execute(
         "SELECT user_id FROM bossoidc_keycloak WHERE \"UID\" = %s",
@@ -341,9 +337,9 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
 
     - point accuracy must be higher than or equal to the input
       ``accuracy_threshold`` value;
-    - timestamps are always ascending between consecutive points;
-    - it is not necessary to keep consecutive points that are too close in
-      space to each other
+    - it is not necessary to keep points that are too close to each other even
+      if they are not consecutive in time - this is a safeguard against very
+      noisy GPS data, whereby sometimes reported positions are repeated
 
     Note: We do not filter out points based on whether they are inside the
           spatial or temporal region of interest yet. This is only done further
@@ -353,23 +349,32 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
 
     """
 
+    speedy = [pt for pt in points if pt.speed > 0]
+    accurate = [pt for pt in speedy if pt.accuracy <= accuracy_threshold]
+    not_accurate_count = len(points) - len(accurate)
+    logger.debug(
+        "Removed {} points with bad accuracy".format(not_accurate_count))
+    result = remove_spatially_similar_points(
+        accurate, position_threshold, coordinate_transformer)
+    spatially_similar_count = len(accurate) - len(result)
+    logger.debug(
+        "Removed {} points too close to one another".format(
+            spatially_similar_count)
+    )
+    return result
+
+
+def remove_spatially_similar_points(points: List[PointData], threshold:float,
+                                    coordinate_transformer) -> List[PointData]:
     result = []
-    if points[0].accuracy <= accuracy_threshold:
-        result.append(points[0])
-    for p1_index in range(len(points) - 1):
-        p1 = points[p1_index]
-        p2 = points[p1_index+1]
-        position_delta = p2.get_distance(p1, coordinate_transformer)
-        if p2.timestamp < p1.timestamp:
-            logger.debug("Removing consecutive point with invalid timestamp")
-        elif position_delta < position_threshold:
-            logger.debug(
-                "Removing consecutive point too close to the previous one")
-        elif p2.accuracy > accuracy_threshold:
-            logger.debug(
-                "Removing point with bad accuracy ({} m)".format(p2.accuracy))
+    for point in points:
+        for other_point in result:
+            position_delta = point.get_distance(
+                other_point, coordinate_transformer)
+            if position_delta < threshold:
+                break
         else:
-            result.append(p2)
+            result.append(point)
     return result
 
 
@@ -396,6 +401,7 @@ def parse_point_raw_data(data: str) -> List[PointData]:
                 logger.exception("Could not parse line {}".format(index))
             else:
                 points.append(point)
+    points.sort(key=lambda pt: pt.timestamp)  # timestamps must be ascending
     return points
 
 
@@ -529,7 +535,8 @@ def filter_points_outside_region_of_interest(segments: SegmentData,
                 sub_segment = [point, next_point]
                 intersection_point = get_segment_intersection_point(
                     sub_segment, region_of_interest)
-                new_segment.append(intersection_point)
+                if intersection_point is not None:
+                    new_segment.append(intersection_point)
 
     return _reconcile_segments(
         segments,
@@ -546,22 +553,27 @@ def get_segment_intersection_point(segment: List[PointData],
     # `intersection` might be single or multi, convert to multi to make uniform
     multi_intersection = ogr.ForceToMultiPoint(intersection)
     first_intersection_geom = multi_intersection.GetGeometryRef(0)
-    intersection_coords = first_intersection_geom.GetPoint()
-    result = PointData(
-        latitude=intersection_coords[1],
-        longitude=intersection_coords[0],
-        timestamp=segment[1].timestamp,
-        vehicle_type=segment[1].vehicle_type,
-        session_id=segment[1].session_id
-    )
-    # now adjust the timestamp
-    new_segment = [segment[0], result]
-    new_segment_geometry = get_segment_geometry(new_segment)
-    length_factor = new_segment_geometry.Length() / geom.Length()
-    segment_duration = get_segment_duration(segment)
-    new_segment_duration = segment_duration * length_factor
-    result.timestamp = segment[0].timestamp + dt.timedelta(
-        seconds=new_segment_duration)
+    if first_intersection_geom is None:
+        result = None
+    else:
+        intersection_coords = first_intersection_geom.GetPoint()
+        result = PointData(
+            latitude=intersection_coords[1],
+            longitude=intersection_coords[0],
+            accuracy=segment[1].accuracy,
+            speed=segment[1].speed,
+            timestamp=segment[1].timestamp,
+            vehicle_type=segment[1].vehicle_type,
+            session_id=segment[1].session_id
+        )
+        # now adjust the timestamp
+        new_segment = [segment[0], result]
+        new_segment_geometry = get_segment_geometry(new_segment)
+        length_factor = new_segment_geometry.Length() / geom.Length()
+        segment_duration = get_segment_duration(segment)
+        new_segment_duration = segment_duration * length_factor
+        result.timestamp = segment[0].timestamp + dt.timedelta(
+            seconds=new_segment_duration)
     return result
 
 
@@ -654,7 +666,7 @@ def get_segment_speeds(segment, coordinate_transformer):
         sub_segment_length = get_length(geom, coordinate_transformer)
         average_speed = sub_segment_length / sub_segment_duration
         max_speed = max(max_speed, average_speed)
-        min_speed = max(min_speed, average_speed)
+        min_speed = min(min_speed, average_speed)
     return max_speed, min_speed
 
 

@@ -13,14 +13,16 @@
 import json
 import logging
 import os
+import re
 
-import boto3
+from pyfcm import FCMNotification
 
 from . import calculateindexes
-from . import processor
-from . import updatebadges
 from . import calculateprizes
 from .exceptions import NonRecoverableError
+from . import processor
+from . import notifications
+from . import updatebadges
 from . import utils
 from .utils import MessageType
 
@@ -33,6 +35,7 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 SNS_TOPIC = os.getenv("SNS_TOPIC")
 USE_SYNCHRONOUS_EXECUTION = os.getenv("SYNCHRONOUS_EXECUTION", "").lower()
+FCM_PUSH_SERVICE = FCMNotification(api_key=os.getenv("FCM_SERVER_KEY"))
 
 
 # TODO: Send a notification for all winners of all closed competitions
@@ -43,7 +46,7 @@ def update_competitions(notify_completion=True):
         with connection.cursor() as cursor:
             calculateprizes.calculate_prizes(cursor)
     if notify_completion:
-        _publish_message(SNS_TOPIC, MessageType.competitions_have_been_updated)
+        _send_notification(MessageType.competitions_have_been_updated)
 
 
 def aws_track_handler(event: dict, context):
@@ -74,14 +77,19 @@ def compact_track_handler(message_type:MessageType, message_arguments: dict,
     """Handler for track-related stuff that does everything"""
 
     if message_type == MessageType.s3_received_track:
-        notify_new_track_available(
-            notify_completion=notify, **message_arguments)
-        track_id, validation_errors = ingest_track(
+        bucket_name, object_key, owner_uuid = get_new_track_info(
             db_cursor, notify_completion=notify, **message_arguments)
-        is_valid = len(validation_errors) == 0
+        track_id, validation_errors = ingest_track(
+            db_cursor, bucket_name, object_key, owner_uuid,
+            notify_completion=notify
+        )
+        logger.debug("track_id: {}".format(track_id))
+        logger.debug("validation_errors: {}".format(validation_errors))
         if len(validation_errors) == 0:
-            calculate_indexes(db_cursor, track_id, notify_completion=notify)
-            update_badges(db_cursor, track_id, notify_completion=notify)
+            calculate_indexes(db_cursor, track_id, owner_uuid,
+                              notify_completion=notify)
+            update_badges(db_cursor, track_id, owner_uuid,
+                          notify_completion=notify)
     else:
         logger.info("Ignoring message {!r}...".format(message_type.name))
 
@@ -98,7 +106,7 @@ def modular_track_handler(message_type:MessageType, message_arguments: dict,
 
     notify = True
     handler = {
-        MessageType.s3_received_track: notify_new_track_available,
+        MessageType.s3_received_track: get_new_track_info,
         MessageType.track_uploaded: ingest_track,
         MessageType.track_validated: calculate_indexes,
         MessageType.indexes_have_been_calculated: update_badges,
@@ -113,8 +121,7 @@ def modular_track_handler(message_type:MessageType, message_arguments: dict,
             "Could not handle message of type {!r}".format(message_type.name))
 
 
-def notify_new_track_available(notify_completion=True, db_cursor=None,
-                               **message_arguments):
+def get_new_track_info(db_cursor, bucket_name, object_key, **kwargs):
     """Forward S3 message to both SNS and mobile apps.
 
     This function grabs the notification sent by S3 and passes it through our
@@ -122,17 +129,30 @@ def notify_new_track_available(notify_completion=True, db_cursor=None,
     apps via Firebase Cloud Messaging.
 
     """
+    try:
+        search_obj = re.search(r"[\w-]{36}", object_key)
+        owner_uuid = search_obj.group()
+    except AttributeError:
+        raise NonRecoverableError(
+            "Could not determine track owner for object {}".format(object_key))
+    _send_notification(
+        MessageType.track_uploaded,
+        message_payload={
+            "bucket_name": bucket_name,
+            "object_key": object_key,
+            "owner_uuid": owner_uuid,
+        }
+    )
+    return bucket_name, object_key, owner_uuid
 
-    _publish_message(
-        SNS_TOPIC, MessageType.track_uploaded, **message_arguments)
 
-
-def ingest_track(db_cursor, bucket_name, object_key, notify_completion=True,
-                 **kwargs):
+def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
+                 notify_completion=True, **kwargs):
     try:
         track_id, validation_errors = processor.ingest_s3_data(
             s3_bucket_name=bucket_name,
             object_key=object_key,
+            owner_uuid=owner_uuid,
             db_cursor=db_cursor
         )
     except NonRecoverableError as exc:
@@ -140,16 +160,24 @@ def ingest_track(db_cursor, bucket_name, object_key, notify_completion=True,
         track_id = None
         validation_errors = [{"message": exc.args[0]}]
     if notify_completion:
-        _publish_message(
-            SNS_TOPIC, MessageType.track_validated,
-            track_id=track_id,
-            is_valid=True if len(validation_errors) == 0 else False,
-            validation_errors=validation_errors
+        _send_notification(
+            MessageType.track_validated,
+            message_payload={
+                "user_uuid": owner_uuid,
+                "track_id": track_id,
+                "is_valid": True,
+                "validation_errors": validation_errors
+            },
+            use_fcm=True,
+            fcm_devices={
+                owner_uuid: get_user_active_devices(db_cursor, owner_uuid)
+            }
         )
     return track_id, validation_errors
 
 
-def calculate_indexes(db_cursor, track_id, notify_completion=True, **kwargs):
+def calculate_indexes(db_cursor, track_id, owner_uuid,
+                      notify_completion=True, **kwargs):
     track_info = utils.get_track_info(track_id, db_cursor)
     if not track_info.is_valid:
         logger.debug(
@@ -157,14 +185,20 @@ def calculate_indexes(db_cursor, track_id, notify_completion=True, **kwargs):
     else:
         calculateindexes.calculate_indexes(track_id, db_cursor)
         if notify_completion:
-            _publish_message(
-                SNS_TOPIC,
+            _send_notification(
                 MessageType.indexes_have_been_calculated,
-                track_id=track_id
+                message_payload={
+                    "track_id": track_id
+                },
+                use_fcm=True,
+                fcm_devices={
+                    owner_uuid: get_user_active_devices(db_cursor, owner_uuid)
+                }
             )
 
 
-def update_badges(db_cursor, track_id, notify_completion=True, **kwargs):
+def update_badges(db_cursor, track_id, owner_uuid,
+                  notify_completion=True, **kwargs):
     track_info = utils.get_track_info(track_id, db_cursor)
     if not track_info.is_valid:
         logger.debug(
@@ -172,13 +206,22 @@ def update_badges(db_cursor, track_id, notify_completion=True, **kwargs):
     else:
         awarded_badges = updatebadges.update_badges(track_id, db_cursor)
         if notify_completion:
-            _publish_message(
-                SNS_TOPIC, MessageType.badges_have_been_updated,
-                track_id=track_id
+            _send_notification(
+                MessageType.badges_have_been_updated,
+                message_payload={
+                    "track_id": track_id
+                }
             )
             for badge_name in awarded_badges:
-                _publish_message(
-                    SNS_TOPIC, MessageType.badge_won, badge_name=badge_name)
+                _send_notification(
+                    MessageType.badge_won,
+                    message_payload={"badge_name": badge_name},
+                    use_fcm=True,
+                    fcm_devices={
+                        owner_uuid: get_user_active_devices(
+                            db_cursor, owner_uuid)
+                    }
+                )
 
 
 def _extract_sns_message(event: dict) -> dict:
@@ -219,23 +262,29 @@ def _parse_message(message: dict):
     return message_type, message_arguments
 
 
-def _publish_message(topic_arn: str, message_type: MessageType, **kwargs):
-    sns_client = boto3.client("sns")
-    payload = kwargs.copy()
-    payload["message_type"] = message_type.name
-    message = {
-        "default": ", ".join(
-            ["{}: {}".format(str(k), str(v)) for k, v in payload.items()]),
-        "lambda": json.dumps(payload)
-    }
-    publish_response = sns_client.publish(
-        TopicArn=topic_arn,
-        Message=json.dumps(message),
-        MessageStructure="json"
+def _send_notification(message_type, message_payload=None,
+                       use_sns=True, use_fcm=False, fcm_devices=None):
+    logger.debug("inside _send_notification: {}".format(locals()))
+    fcm_devices = dict(fcm_devices) if fcm_devices is not None else {}
+    payload = dict(message_payload) if message_payload is not None else {}
+    if use_sns:
+        notifications.publish_message_to_sns(
+            SNS_TOPIC, message_type, **payload)
+    if use_fcm:
+        for owner_uuid, device_ids in fcm_devices.items():
+            payload["user"] = owner_uuid
+            devices = list(device_ids) if device_ids else []
+            notifications.publish_message_to_fcm(
+                FCM_PUSH_SERVICE, devices, message_type, payload
+            )
+
+
+def get_user_active_devices(db_cursor, user_uuid):
+    db_cursor.execute(
+        utils.get_query("select-user-active-devices.sql"),
+        {"owner_uuid": user_uuid}
     )
-    if publish_response["ResponseMetadata"]["HTTPStatusCode"] != 200:
-        raise RuntimeError("Could not publish {!r} message to SNS: {}".format(
-            message_type.name, publish_response))
+    return [row[0] for row in db_cursor.fetchall()]
 
 
 def _setup_logging():

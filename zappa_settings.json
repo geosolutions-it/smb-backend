@@ -41,9 +41,8 @@
     "s3_bucket": "savemybike-code",
     "vpc_config": {
       "SubnetIds": [
-        "subnet-de18a595",
         "subnet-014edd78",
-        "subnet-2a47d453"
+        "subnet-0d1404b773e7ab2a6"
       ],
       "SecurityGroupIds": [
         "sg-0d9f637c",
