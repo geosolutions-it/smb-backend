@@ -213,7 +213,9 @@ def test_handle_data_collector_badge(badge_name, badge_target, track_created,
         start_date=None,
         end_date=None,
         length=1,
-        segments=None
+        segments=None,
+        is_valid=True,
+        validation_error=""
     )
     mock_rows = [(dt.datetime.strptime(i, DATE_FMT),) for i in existing]
     mock_cursor = mock.create_autospec(
@@ -256,7 +258,9 @@ def test_handle_biker_badge(badge_name, track_created, existing, expected):
                 "vehicle_type": "bike",
                 "length": 0,
             }
-        ]
+        ],
+        is_valid=True,
+        validation_error=""
     )
     mock_rows = [(dt.datetime.strptime(i, DATE_FMT),) for i in existing]
     mock_cursor = mock.create_autospec(

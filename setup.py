@@ -22,8 +22,9 @@ setup(
     install_requires=[
         "boto3==1.9.0",
         "psycopg2-binary==2.7.5",
+        "pyfcm==1.4.5",
         "pytz==2018.5",
-        "zappa==0.46.2",
+        "zappa",
     ],
     entry_points={
         "console_scripts": [
