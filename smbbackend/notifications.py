@@ -49,9 +49,8 @@ def publish_message_to_fcm(fcm_push_service: FCMNotification,
                            low_priority=False,
                            dry_run=False):
     original_payload = data_payload.copy() if data_payload is not None else {}
-    payload = {str(k): str(v) for k, v in original_payload.items()}
+    payload = {str(k): str(v).lower() for k, v in original_payload.items()}
     payload["message_name"] = smb_message_type.name
-    logger.debug("inside publish_message_to_fcm: {}".format(locals()))
     result = fcm_push_service.notify_multiple_devices(
         registration_ids=device_registration_ids,
         data_message=payload,
