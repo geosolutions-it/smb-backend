@@ -161,6 +161,12 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
         raise_on_invalid_data=False,
         **DATA_PROCESSING_PARAMETERS
     )
+
+    # Reset validation_errors to an empty list in order to effectively
+    # disable validation - This is a temporary measure
+    # TODO: re-enable validation results
+    validation_errors = []
+
     track_id = save_track(
         session_id, segments, owner_uuid, validation_errors, db_cursor)
     utils.update_track_info(track_id, db_cursor)
