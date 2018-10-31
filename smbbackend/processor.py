@@ -31,6 +31,8 @@ from .utils import get_query
 gdal.UseExceptions()
 logger = logging.getLogger(__name__)
 
+# TODO: re-enable validation results
+ENABLE_TRACK_VALIDATION = False
 
 DATA_PROCESSING_PARAMETERS = {
     "segments_distance_thresholds": {  # in m
@@ -161,12 +163,6 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
         raise_on_invalid_data=False,
         **DATA_PROCESSING_PARAMETERS
     )
-
-    # Reset validation_errors to an empty list in order to effectively
-    # disable validation - This is a temporary measure
-    # TODO: re-enable validation results
-    validation_errors = []
-
     track_id = save_track(
         session_id, segments, owner_uuid, validation_errors, db_cursor)
     utils.update_track_info(track_id, db_cursor)
@@ -261,12 +257,19 @@ def process_data(points: List[PointData], db_cursor,
     errors = []
     validate_points(points)
     coordinate_transformer = get_coordinate_transformer()
-    filtered_points = filter_point_data(
-        points,
-        coordinate_transformer,
-        accuracy_threshold=settings["points_accuracy_threshold"],
-        position_threshold=settings["points_position_threshold"]
-    )
+    if ENABLE_TRACK_VALIDATION:
+        filtered_points = filter_point_data(
+            points,
+            coordinate_transformer,
+            accuracy_threshold=settings["points_accuracy_threshold"],
+            position_threshold=settings["points_position_threshold"]
+        )
+    else:
+        filtered_points = remove_spatially_similar_points(
+            points,
+            settings["points_position_threshold"],
+            coordinate_transformer
+        )
     segments = generate_segments(
         filtered_points,
         coordinate_transformer,
@@ -299,6 +302,8 @@ def process_data(points: List[PointData], db_cursor,
     for segment in filtered_segments:
         info = get_segment_info(segment, coordinate_transformer)
         result.append((segment, info))
+    if not ENABLE_TRACK_VALIDATION:
+        errors = []
     return result, errors
 
 
