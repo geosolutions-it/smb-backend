@@ -30,6 +30,7 @@ setup(
             "set-lambda-env=smbbackend.awsutils:main_set_lambda_env",
             "convert-spatialite=smbbackend.convertspatialfiles:main",
             "ingest-tracks=smbbackend.standalonehandlers:main",
+            "process-tracks-locally=smbbackend.ingestiontester:main"
         ]
     }
 )

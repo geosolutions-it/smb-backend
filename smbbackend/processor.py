@@ -10,14 +10,17 @@
 
 from collections import namedtuple
 import datetime as dt
+from functools import partial
 import io
 import logging
 from typing import List
-from typing import Tuple
 from typing import Callable
+from typing import Optional
+from typing import Tuple
 import zipfile
 
 import boto3
+import numpy as np
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
@@ -36,22 +39,22 @@ ENABLE_TRACK_VALIDATION = False
 
 DATA_PROCESSING_PARAMETERS = {
     "segments_distance_thresholds": {  # in m
-        VehicleType.foot: 100,
+        VehicleType.foot: 20,
         VehicleType.bike: 300,
         VehicleType.motorcycle: 500,
         VehicleType.car: 500,
         VehicleType.bus: 500,
         VehicleType.train: 1000,
     },
-    "segments_minute_threshold": 20,
+    "segments_minute_threshold": 5,
     "segments_temporal_lower_bound": dt.datetime(2018, 1, 1, tzinfo=pytz.utc),
     "segments_temporal_upper_bound": (
         dt.datetime.now(pytz.utc) + dt.timedelta(days=1)),
     "segments_small_threshold": 1,
     "points_position_threshold": 0.1,
-    "points_accuracy_threshold": 20,
+    "points_accuracy_threshold": 100,
     "segments_speed_thresholds": {  # (average_speed, max_speed), in m/s
-        VehicleType.foot: (2.78, 2.78),  # 10km/h , 10 km/h
+        VehicleType.foot: (5.6, 5.6),  # 20km/h , 20 km/h
         VehicleType.bike: (30, 30),  # 108 km/h, 108 km/h
     },
     "segments_length_thresholds": {  # expressed in m
@@ -62,10 +65,18 @@ DATA_PROCESSING_PARAMETERS = {
         VehicleType.foot: 43200,  # 12 hours
         VehicleType.bike: 43200,  # 12 hours
     },
+    "segments_pairwise_stddev_coeff": {
+        VehicleType.foot: 0.5,
+        VehicleType.bike: 2,
+        VehicleType.motorcycle: 2,
+        VehicleType.car: 2,
+        VehicleType.bus: 2,
+        VehicleType.train: 2,
+    }
 }
 
 SegmentData = List[List["PointData"]]
-FullSegmentData = List[Tuple[List["PointData"], "SegmentInfo"]]
+FullSegmentData = List[Tuple[List["PointData"], "SegmentInfo", List]]
 
 SegmentInfo = namedtuple("SegmentInfo", [
     "geometry",
@@ -151,37 +162,40 @@ class PointData(object):
 
 
 def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
-                   db_cursor) -> Tuple[int, int, List[dict]]:
+                   db_cursor) -> Tuple[List[FullSegmentData], int, int]:
     """Ingest track data into smb database"""
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
     points = parse_point_raw_data(raw_data)
     session_id = get_session_id(points)
-    segments, validation_errors = process_data(
+    segments_data = process_data(
         points,
         db_cursor,
-        raise_on_invalid_data=False,
         **DATA_PROCESSING_PARAMETERS
     )
-    track_id = save_track(
-        session_id, segments, owner_uuid, validation_errors, db_cursor)
+    track_id = save_track(session_id, segments_data, owner_uuid, db_cursor)
     utils.update_track_info(track_id, db_cursor)
-    return track_id, session_id, validation_errors
+    return segments_data, track_id, session_id
 
 
-def save_track(session_id, segments: FullSegmentData, owner_uuid: str,
-               validation_errors: List[dict], db_cursor):
+def save_track(session_id, segments_data: FullSegmentData, owner_uuid: str,
+               db_cursor):
     owner_internal_id = get_track_owner_internal_id(owner_uuid, db_cursor)
-    track_id = insert_track(session_id, owner_internal_id, validation_errors,
+    track_errors = [s[2] for s in segments_data]
+    track_id = insert_track(session_id, owner_internal_id, track_errors,
                             db_cursor)
-    insert_points(track_id, segments, db_cursor)
-    insert_segments(track_id, segments, owner_uuid, db_cursor)
+    insert_points(track_id, segments_data, db_cursor)
+    insert_segments(track_id, segments_data, owner_uuid, db_cursor)
     return track_id
 
 
-def insert_track(session_id: int, owner: int, validation_errors: List[dict],
-                 db_cursor) -> int:
+def insert_track(session_id: int, owner: int,
+                 validation_errors: List[List[dict]], db_cursor) -> int:
     """Insert track data into the main database"""
+    track_errors = []
+    for segment_errors in validation_errors:
+        for error in segment_errors:
+            track_errors.append(f'{error["vehicle_type"]}: {error["message"]}')
     query = get_query("insert-track.sql")
     db_cursor.execute(
         query,
@@ -190,8 +204,7 @@ def insert_track(session_id: int, owner: int, validation_errors: List[dict],
             "session_id": session_id,
             "created_at": dt.datetime.now(pytz.utc),
             "is_valid": True if len(validation_errors) == 0 else False,
-            "validation_error": ", ".join(
-                error["message"] for error in validation_errors)
+            "validation_error": ", ".join(track_errors)
         }
     )
     track_id = db_cursor.fetchone()[0]
@@ -200,7 +213,7 @@ def insert_track(session_id: int, owner: int, validation_errors: List[dict],
 
 def insert_points(track_id: int, segments: FullSegmentData, db_cursor):
     query = get_query("insert-point.sql")
-    for segment, info in segments:
+    for segment, info, errors in segments:
         for point in segment:
             db_cursor.execute(
                 query,
@@ -218,7 +231,7 @@ def insert_points(track_id: int, segments: FullSegmentData, db_cursor):
 def insert_segments(track_id: int, segments: FullSegmentData, owner: str,
                     db_cursor):
     segment_ids = []
-    for segment, info in segments:
+    for segment, info, errors in segments:
         db_cursor.execute(
             get_query("insert-segment.sql"),
             {
@@ -238,73 +251,73 @@ def get_session_id(parsed_points: List[PointData]):
     return parsed_points[0].session_id
 
 
-def process_data(points: List[PointData], db_cursor,
-                 raise_on_invalid_data=True,
-                 **settings) -> Tuple[FullSegmentData, List]:
-    """Process the raw collected points into segments
-
-    The following operations are performed on the raw data:
-
-    - Parsing into ``PointData`` instances
-    - Verifying that enough points exist
-    - Removing points that have invalid timestamps
-    - Removing points that are too close to one another
-    - Grouping consecutive points into segments, based on similarities
-    - Removing invalid points from segments and make segments consistent
-
-    """
-
-    errors = []
+def process_points(points: List[PointData], transformer, **settings):
     validate_points(points)
-    coordinate_transformer = get_coordinate_transformer()
-    if ENABLE_TRACK_VALIDATION:
-        filtered_points = filter_point_data(
-            points,
-            coordinate_transformer,
-            accuracy_threshold=settings["points_accuracy_threshold"],
-            position_threshold=settings["points_position_threshold"]
-        )
-    else:
-        filtered_points = remove_spatially_similar_points(
-            points,
-            settings["points_position_threshold"],
-            coordinate_transformer
-        )
-    segments = generate_segments(
-        filtered_points,
-        coordinate_transformer,
+    filtered_points = filter_point_data(
+        points,
+        transformer,
+        accuracy_threshold=settings["points_accuracy_threshold"],
+        position_threshold=settings["points_position_threshold"]
+    )
+    return filtered_points
+
+
+def process_segments(points: List[PointData], transformer, db_cursor,
+                     **settings):
+    generate_segments_partial = partial(
+        generate_segments,
+        transformer=transformer,
         minute_threshold=settings["segments_minute_threshold"],
         distance_thresholds=settings["segments_distance_thresholds"]
     )
-    logger.debug("number of points inside generated segments: {}".format(
-        [len(s) for s in segments]))
+    initial_segments = generate_segments_partial(points)
+    logger.debug(
+        "generated {} initial segments with number of points: {}".format(
+            len(initial_segments), [len(s) for s in initial_segments])
+    )
+    final_points = []
+    for segment in initial_segments:
+        filtered_segment_points = filter_pairwise_segment_points(
+            segment, transformer, settings["segments_pairwise_stddev_coeff"])
+        final_points.extend(filtered_segment_points)
+    if len(final_points) < 2:
+        raise exceptions.NonRecoverableError(
+            "cannot generate final segments, not enough points left")
+    final_segments = generate_segments_partial(final_points)
     filtered_segments = apply_segment_filters(
-        segments,
+        final_segments,
         temporal_lower_bound=settings["segments_temporal_lower_bound"],
         temporal_upper_bound=settings["segments_temporal_upper_bound"],
         db_cursor=db_cursor,
         small_segments_threshold=settings["segments_small_threshold"]
     )
-    try:
-        validate_segments(
-            filtered_segments, coordinate_transformer, **settings)
-    except exceptions.RecoverableError as exc:
-        logger.exception("Segment validation failed")
-        errors.append({
-            "message": exc.args[0],
-            "variable": exc.args[1],
-            "value": exc.args[2],
-            "vehicle_type": exc.args[3],
-        })
-        if raise_on_invalid_data:
-            raise
     result = []
     for segment in filtered_segments:
-        info = get_segment_info(segment, coordinate_transformer)
-        result.append((segment, info))
-    if not ENABLE_TRACK_VALIDATION:
-        errors = []
-    return result, errors
+        info = get_segment_info(segment, transformer)
+
+        type_ = info.vehicle_type
+        avg, max_ = settings["segments_speed_thresholds"].get(type_, (0, 0))
+        validation_errors = validate_segment_info(
+            info,
+            average_speed=avg,
+            max_speed=max_,
+            length=settings["segments_length_thresholds"].get(type_, 0),
+            duration=settings["segments_duration_thresholds"].get(type_, 0),
+        )
+        result.append((segment, info, validation_errors))
+    return result
+
+
+def process_data(points: List[PointData], cursor,
+                 **settings) -> FullSegmentData:
+    """Process the raw collected points into segments"""
+    transformer = get_coordinate_transformer()
+    filtered_points = process_points(points, transformer, **settings)
+    if len(filtered_points) < 2:
+        raise exceptions.NonRecoverableError(
+            "cannot generate segments, not enough points left")
+    return process_segments(
+        filtered_points, transformer, cursor, **settings)
 
 
 def get_data_from_s3(bucket_name: str, object_key: str,
@@ -360,11 +373,12 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
 
     """
 
-    speedy = [pt for pt in points if pt.speed > 0]
-    accurate = [pt for pt in speedy if pt.accuracy <= accuracy_threshold]
+    # speedy = [pt for pt in points if pt.speed > 0]
+    # not_speedy_count = len(points) - len(speedy)
+    # logger.debug(f"Removed {not_speedy_count} points with bad speed")
+    accurate = [pt for pt in points if pt.accuracy <= accuracy_threshold]
     not_accurate_count = len(points) - len(accurate)
-    logger.debug(
-        "Removed {} points with bad accuracy".format(not_accurate_count))
+    logger.debug(f"Removed {not_accurate_count} points with bad accuracy")
     result = remove_spatially_similar_points(
         accurate, position_threshold, coordinate_transformer)
     spatially_similar_count = len(accurate) - len(result)
@@ -480,7 +494,8 @@ def generate_segments(points: List[PointData], transformer,
             segments.append([pt])  # start new segment
         else:
             segments[-1].append(pt)
-    return segments
+    long_enough_segments = [seg for seg in segments if len(seg) > 2]
+    return long_enough_segments
 
 
 def filter_invalid_temporal_points(segments: SegmentData,
@@ -700,67 +715,47 @@ def get_segment_info(segment: List[PointData], coordinate_transformer):
     )
 
 
-def validate_segment(segment: List[PointData], info: SegmentInfo, **settings):
+def validate_segment_info(info: SegmentInfo, average_speed, max_speed,
+                          length, duration):
     relevant_vehicle_types = [
         VehicleType.foot,
         VehicleType.bike
     ]
-    if info.vehicle_type in relevant_vehicle_types:
-        validate_segment_speed(info, settings["segments_speed_thresholds"])
-        validate_segment_length(info, settings["segments_length_thresholds"])
-        validate_segment_duration(
-            info, settings["segments_duration_thresholds"])
-
-
-def validate_segment_speed(segment_info: SegmentInfo, speed_thresholds):
-    avg_threshold, max_threshold = speed_thresholds.get(
-        segment_info.vehicle_type, (0, 0))
-    if segment_info.average_speed > avg_threshold:
-        raise exceptions.RecoverableError(
-            utils.ValidationError.segment_speed_too_high.name,
+    _errors = []
+    if info.vehicle_type not in relevant_vehicle_types:
+        return []
+    if info.average_speed > average_speed:
+        _errors.append((
+            utils.ValidationError.segment_speed_too_high,
             "average_speed",
-            segment_info.average_speed,
-            segment_info.vehicle_type.name
-        )
-    if segment_info.max_speed > max_threshold:
-        raise exceptions.RecoverableError(
-            utils.ValidationError.segment_speed_too_high.name,
+            info.average_speed
+        ))
+    if info.max_speed > max_speed:
+        _errors.append((
+            utils.ValidationError.segment_speed_too_high,
             "max_speed",
-            segment_info.max_speed,
-            segment_info.vehicle_type.name
-        )
-
-
-def validate_segment_length(segment_info: SegmentInfo, length_thresholds):
-    length_threshold = length_thresholds.get(segment_info.vehicle_type, 0)
-    if segment_info.length > length_threshold:
-        raise exceptions.RecoverableError(
-            utils.ValidationError.segment_length_too_big.name,
+            info.max_speed,
+        ))
+    if info.length > length:
+        _errors.append((
+            utils.ValidationError.segment_length_too_big,
             "length",
-            segment_info.length,
-            segment_info.vehicle_type.name
-        )
-
-
-def validate_segment_duration(segment_info: SegmentInfo, duration_thresholds):
-    duration_threshold = duration_thresholds.get(segment_info.vehicle_type, 0)
-    if segment_info.duration > duration_threshold:
-        raise exceptions.RecoverableError(
+            info.length,
+        ))
+    if info.duration > duration:
+        _errors.append((
             utils.ValidationError.segment_duration_too_long,
             "duration",
-            segment_info.duration,
-            segment_info.vehicle_type.name
-        )
-
-
-def validate_segments(segments: SegmentData, coordinate_transformer,
-                      **settings):
-    if len(segments) == 0:
-        raise exceptions.NonRecoverableError("No valid segments")
-    else:
-        for segment in segments:
-            info = get_segment_info(segment, coordinate_transformer)
-            validate_segment(segment, info, **settings)
+            info.duration,
+        ))
+    return [
+        {
+            "msg": e[0].name,
+            "variable": e[1],
+            "value": e[2],
+            "vehicle_type": info.vehicle_type.name
+        } for e in _errors
+    ]
 
 
 def apply_segment_filters(segments: SegmentData,
@@ -801,3 +796,48 @@ def apply_segment_filters(segments: SegmentData,
         if len(current_segments) == 0:
             break
     return current_segments
+
+
+def filter_pairwise_segment_points(points, transformer, stddev_coeffs):
+    """Filter out segment points based on anomalous speed
+
+    Anomalies are detected by getting the mean speed and stddev for all points
+    and then removing points that are above a speed threshold
+
+    """
+
+    speeds = []
+    for p1, p2 in zip(points, points[1:]):
+        info = get_segment_info([p1, p2], transformer)
+        coeff = stddev_coeffs.get(info.vehicle_type, 1)
+        speeds.append((p1, p2, info.average_speed))
+    speeds_vector = np.array(speeds)
+    mean_speed = speeds_vector[:, 2].mean()
+    std_speed = speeds_vector[:, 2].std()
+    max_speed = speeds_vector[:, 2].max()
+    speed_threhsold = mean_speed + coeff * std_speed
+    logger.debug(
+        "mean: {:0.3f} std: {:0.3f} max: {:0.3f} "
+        "speed_threshold: {:0.3f}".format(mean_speed, std_speed, max_speed,
+                                          speed_threhsold)
+    )
+    valid_segments_selection = np.where(speeds_vector[:, 2] <= speed_threhsold)
+    valid_p1s = speeds_vector[valid_segments_selection][:, 0]
+    filtered_points = list(valid_p1s)
+
+    # if speeds_vector[0, 2] <= speed_threhsold:  # checking second point
+    #     filtered_points.insert(1, speeds_vector, 0, 1)
+
+    if speeds_vector[-1, 2] <= speed_threhsold:  # checking last point
+        filtered_points.append(speeds_vector[-1, 1])
+    logger.debug(f"removed {len(points) - len(filtered_points)} points")
+    return filtered_points
+    # invalid_segments_selection = np.where(
+    #     speeds_vector[:, 2] > speed_threhsold)
+    # invalid_p1s = speeds_vector[invalid_segments_selection][:, 0]
+    # invalid_p2s = speeds_vector[invalid_segments_selection][:, 1]
+    # all_invalid = set(invalid_p1s).union(set(invalid_p2s))
+    # filtered_points = set(points).difference(all_invalid)
+    # logger.debug("removed {} points".format(
+    #     len(points) - len(filtered_points)))
+    # return sorted(list(filtered_points), key=lambda pt: pt.timestamp)

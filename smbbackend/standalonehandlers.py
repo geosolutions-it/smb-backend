@@ -48,10 +48,6 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 
 
-def update_badges(track_identifier: int, db_connection):
-    updatebadges.update_badges(track_identifier, db_connection)
-
-
 def get_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("owner_uuid")
@@ -82,30 +78,30 @@ def main():
             with connection as conn:
                 with conn.cursor() as cursor:
                     try:
-                        segments, errors = processor.process_data(
+                        segments_data = processor.process_data(
                             parsed_points,
                             cursor,
-                            raise_on_invalid_data=False,
                             **DATA_PROCESSING_PARAMETERS
                         )
+                        validation_errors = [s[2] for s in segments_data]
                     except NonRecoverableError:
                         logger.exception(
                             "Could not process item {}".format(item))
                         continue
                     track_id = processor.save_track(
-                        session_id, segments, args.owner_uuid, errors, cursor)
+                        session_id, segments_data, args.owner_uuid, cursor)
                     utils.update_track_info(track_id, cursor)
                     track_info = utils.get_track_info(track_id, cursor)
                     if track_info.is_valid:
                         logger.info("Calculating indexes...")
                         calculateindexes.calculate_indexes(track_id, cursor)
                         logger.info("Updating badges...")
-                        update_badges(track_id, cursor)
+                        updatebadges.update_badges(track_id, cursor)
                     else:
                         logger.warning(
                             "track {} is not valid, so no further "
                             "calculations have been made. Validation "
-                            "errors: {}".format(track_id, errors)
+                            "errors: {}".format(track_id, validation_errors)
                         )
     logger.info("Done!")
 
