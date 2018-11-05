@@ -162,7 +162,7 @@ class PointData(object):
 
 
 def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
-                   db_cursor) -> Tuple[List[FullSegmentData], int, int]:
+                   db_cursor) -> Tuple[FullSegmentData, int, int]:
     """Ingest track data into smb database"""
     logger.debug("Retrieving data from S3 bucket...")
     raw_data = get_data_from_s3(s3_bucket_name, object_key)
@@ -181,8 +181,7 @@ def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
 def save_track(session_id, segments_data: FullSegmentData, owner_uuid: str,
                db_cursor):
     owner_internal_id = get_track_owner_internal_id(owner_uuid, db_cursor)
-    track_errors = [s[2] for s in segments_data]
-    track_id = insert_track(session_id, owner_internal_id, track_errors,
+    track_id = insert_track(session_id, owner_internal_id, segments_data,
                             db_cursor)
     insert_points(track_id, segments_data, db_cursor)
     insert_segments(track_id, segments_data, owner_uuid, db_cursor)
@@ -190,12 +189,14 @@ def save_track(session_id, segments_data: FullSegmentData, owner_uuid: str,
 
 
 def insert_track(session_id: int, owner: int,
-                 validation_errors: List[List[dict]], db_cursor) -> int:
+                 segments_data: FullSegmentData, db_cursor) -> int:
     """Insert track data into the main database"""
     track_errors = []
-    for segment_errors in validation_errors:
-        for error in segment_errors:
-            track_errors.append(f'{error["vehicle_type"]}: {error["message"]}')
+    for segment_data in segments_data:
+        for segment_errors in segment_data[2]:
+            for error in segment_errors:
+                track_errors.append(
+                    f'{error["vehicle_type"]}: {error["message"]}')
     query = get_query("insert-track.sql")
     db_cursor.execute(
         query,
@@ -203,7 +204,7 @@ def insert_track(session_id: int, owner: int,
             "owner_id": owner,
             "session_id": session_id,
             "created_at": dt.datetime.now(pytz.utc),
-            "is_valid": True if len(validation_errors) == 0 else False,
+            "is_valid": is_track_valid(segments_data),
             "validation_error": ", ".join(track_errors)
         }
     )
@@ -841,3 +842,8 @@ def filter_pairwise_segment_points(points, transformer, stddev_coeffs):
     # logger.debug("removed {} points".format(
     #     len(points) - len(filtered_points)))
     # return sorted(list(filtered_points), key=lambda pt: pt.timestamp)
+
+
+def is_track_valid(segments_data):
+    validation_errors = [s[2] for s in segments_data]
+    return all([len(s) == 0 for s in validation_errors])

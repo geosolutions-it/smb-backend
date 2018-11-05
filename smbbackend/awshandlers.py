@@ -157,15 +157,15 @@ def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
             owner_uuid=owner_uuid,
             db_cursor=db_cursor
         )
+        is_valid = processor.is_track_valid(segments_data)
         validation_errors = [s[2] for s in segments_data]
         flattened_errors = _flatten_validation_errors(validation_errors)
-        is_valid = all([len(s) == 0 for s in validation_errors])
     except NonRecoverableError as exc:
         logger.exception("Could not perform track ingestion")
         track_id = None
         session_id = None
-        validation_errors = [[{"message": exc.args[0]}]]
         is_valid = False
+        validation_errors = [[{"message": exc.args[0]}]]
         flattened_errors = validation_errors[0][0]["message"]
     if notify_completion:
         _send_notification(
