@@ -15,6 +15,7 @@ import logging
 import os
 import re
 from typing import List
+from typing import Tuple
 
 from pyfcm import FCMNotification
 
@@ -50,6 +51,7 @@ def update_competitions(notify_completion=True):
         _send_notification(MessageType.competitions_have_been_updated)
 
 
+# FIXME - send notification after the db_connection `with` block has ended
 def aws_track_handler(event: dict, context):
     """Handler for lambda invocations
 
@@ -80,13 +82,12 @@ def compact_track_handler(message_type:MessageType, message_arguments: dict,
     if message_type == MessageType.s3_received_track:
         bucket_name, object_key, owner_uuid = get_new_track_info(
             db_cursor, notify_completion=notify, **message_arguments)
-        track_id, validation_errors = ingest_track(
+        track_id, is_valid = ingest_track(
             db_cursor, bucket_name, object_key, owner_uuid,
             notify_completion=notify
         )
-        logger.debug("track_id: {}".format(track_id))
-        logger.debug("validation_errors: {}".format(validation_errors))
-        if len(validation_errors) == 0:
+        logger.debug(f"track_id: {track_id} - is_valid: {is_valid}")
+        if is_valid:
             calculate_indexes(db_cursor, track_id, owner_uuid,
                               notify_completion=notify)
             update_badges(db_cursor, track_id, owner_uuid,
@@ -148,21 +149,24 @@ def get_new_track_info(db_cursor, bucket_name, object_key, **kwargs):
 
 
 def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
-                 notify_completion=True, **kwargs):
+                 notify_completion=True, **kwargs) -> Tuple[int, bool]:
     try:
-        track_id, session_id, validation_errors = processor.ingest_s3_data(
+        segments_data, track_id, session_id = processor.ingest_s3_data(
             s3_bucket_name=bucket_name,
             object_key=object_key,
             owner_uuid=owner_uuid,
             db_cursor=db_cursor
         )
+        is_valid = processor.is_track_valid(segments_data)
+        validation_errors = [s[2] for s in segments_data]
         flattened_errors = _flatten_validation_errors(validation_errors)
     except NonRecoverableError as exc:
         logger.exception("Could not perform track ingestion")
         track_id = None
         session_id = None
-        validation_errors = [{"message": exc.args[0]}]
-        flattened_errors = validation_errors[0]["message"]
+        is_valid = False
+        validation_errors = [[{"message": exc.args[0]}]]
+        flattened_errors = validation_errors[0][0]["message"]
     if notify_completion:
         _send_notification(
             MessageType.track_validated,
@@ -170,7 +174,7 @@ def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
                 "user_uuid": owner_uuid,
                 "track_id": track_id,
                 "session_id": session_id,
-                "is_valid": True if len(validation_errors) == 0 else False,
+                "is_valid": is_valid,
                 "validation_errors": flattened_errors
             },
             use_fcm=True,
@@ -178,7 +182,7 @@ def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
                 owner_uuid: get_user_active_devices(db_cursor, owner_uuid)
             }
         )
-    return track_id, validation_errors
+    return track_id, is_valid
 
 
 def calculate_indexes(db_cursor, track_id, owner_uuid,
@@ -292,14 +296,15 @@ def get_user_active_devices(db_cursor, user_uuid):
     return [row[0] for row in db_cursor.fetchall()]
 
 
-def _flatten_validation_errors(errors: List[dict]):
+def _flatten_validation_errors(errors: List[List[dict]]):
     flattened_errors = ""
-    for error in errors:
-        flattened_error = "{} ({}: {} - {})".format(
-            error["message"], error["variable"], error["value"],
-            error["vehicle_type"]
-        )
-        flattened_errors = ",".join((flattened_errors, flattened_error))
+    for segment_errors in errors:
+        for error in segment_errors:
+            flattened_error = "{} ({}: {} - {})".format(
+                error["message"], error["variable"], error["value"],
+                error["vehicle_type"]
+            )
+            flattened_errors = ",".join((flattened_errors, flattened_error))
     return flattened_errors
 
 
