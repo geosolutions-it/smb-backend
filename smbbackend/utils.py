@@ -51,6 +51,7 @@ class MessageType(Enum):
     competitions_have_been_updated = 8
     prize_won = 9
     unknown = 10
+    bike_observed = 11
 
 
 class ValidationError(Enum):
@@ -105,3 +106,11 @@ def update_track_info(track_id, db_cursor):
         get_query("update-track-info.sql"),
         {"track_id": track_id}
     )
+
+def get_user_uuid(user_id: int, db_cursor):
+    db_cursor.execute(
+        "SELECT \"UID\" FROM bossoidc_keycloak WHERE user_id = %(user_id)s",
+        {"user_id": user_id}
+    )
+    result = db_cursor.fetchone()
+    return result[0] if result is not None else None
