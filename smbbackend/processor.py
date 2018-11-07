@@ -15,7 +15,6 @@ import io
 import logging
 from typing import List
 from typing import Callable
-from typing import Optional
 from typing import Tuple
 import zipfile
 
@@ -39,7 +38,7 @@ ENABLE_TRACK_VALIDATION = False
 
 DATA_PROCESSING_PARAMETERS = {
     "segments_distance_thresholds": {  # in m
-        VehicleType.foot: 20,
+        VehicleType.foot: 50,
         VehicleType.bike: 300,
         VehicleType.motorcycle: 500,
         VehicleType.car: 500,
@@ -66,7 +65,7 @@ DATA_PROCESSING_PARAMETERS = {
         VehicleType.bike: 43200,  # 12 hours
     },
     "segments_pairwise_stddev_coeff": {
-        VehicleType.foot: 0.5,
+        VehicleType.foot: 2,
         VehicleType.bike: 2,
         VehicleType.motorcycle: 2,
         VehicleType.car: 2,
@@ -193,10 +192,8 @@ def insert_track(session_id: int, owner: int,
     """Insert track data into the main database"""
     track_errors = []
     for segment_data in segments_data:
-        for segment_errors in segment_data[2]:
-            for error in segment_errors:
-                track_errors.append(
-                    f'{error["vehicle_type"]}: {error["message"]}')
+        for error in segment_data[2]:
+            track_errors.append(f'{error["vehicle_type"]}: {error["msg"]}')
     query = get_query("insert-track.sql")
     db_cursor.execute(
         query,
@@ -317,8 +314,12 @@ def process_data(points: List[PointData], cursor,
     if len(filtered_points) < 2:
         raise exceptions.NonRecoverableError(
             "cannot generate segments, not enough points left")
-    return process_segments(
+    segments_data = process_segments(
         filtered_points, transformer, cursor, **settings)
+    if len(segments_data) == 0:
+        raise exceptions.NonRecoverableError("no segments could be generated")
+    else:
+        return segments_data
 
 
 def get_data_from_s3(bucket_name: str, object_key: str,
@@ -521,10 +522,11 @@ def filter_points_outside_region_of_interest(segments: SegmentData,
 
 
     def _check_intersection(point: PointData):
-        result = region_of_interest.Intersects(point.geometry)
-        if not result:
+        logger.debug(f"check_intersection called with {point}")
+        intersects_roi = point_intersects_roi(point, region_of_interest)
+        if not intersects_roi:
             logger.debug("Point is outside region of interest")
-        return result
+        return intersects_roi
 
 
     def _segment_point_invalid_region_of_interest(new_segment,
@@ -570,6 +572,18 @@ def filter_points_outside_region_of_interest(segments: SegmentData,
         _check_intersection,
         point_invalid_func=_segment_point_invalid_region_of_interest
     )
+
+
+def point_intersects_roi(point: PointData, region_of_interest: ogr.Geometry):
+    for i in range(region_of_interest.GetGeometryCount()):
+        sub_geom = region_of_interest.GetGeometryRef(i)
+        intersects = sub_geom.Intersects(point.geometry)
+        if intersects:
+            result = True
+            break
+    else:
+        result = False
+    return result
 
 
 def get_segment_intersection_point(segment: List[PointData],
