@@ -301,7 +301,7 @@ def _flatten_validation_errors(errors: List[List[dict]]):
     for segment_errors in errors:
         for error in segment_errors:
             flattened_error = "{} ({}: {} - {})".format(
-                error["message"], error["variable"], error["value"],
+                error["msg"], error["variable"], error["value"],
                 error["vehicle_type"]
             )
             flattened_errors = ",".join((flattened_errors, flattened_error))

@@ -69,9 +69,6 @@ def process_files(base_dir: pathlib.Path, item_pattern, db_parameters):
     with concurrent.futures.ProcessPoolExecutor() as executor:
         total_files = 0
         files_with_errors = 0
-        # for index, item in enumerate(base_dir.iterdir()):
-        #     if index > 2:
-        #         break
         for item in base_dir.iterdir():
             pattern_passes = item_pattern is None or fnmatch(
                 item.name, item_pattern)
