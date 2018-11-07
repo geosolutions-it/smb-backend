@@ -50,7 +50,7 @@ CompetitorInfo = namedtuple("CompetitorInfo", [
 ])
 
 
-def calculate_prizes(db_cursor):
+def calculate_prizes(db_cursor) -> List[Tuple[CompetitionInfo, List[dict]]]:
     """Calculate results for currently open competitions"""
     now = dt.datetime.now(pytz.utc)
     open_competitions = get_open_competitions(db_cursor)
@@ -59,6 +59,7 @@ def calculate_prizes(db_cursor):
         len(open_competitions)))
     logger.debug("number of expired competitions: {}".format(
         len(expired)))
+    result = []
     for competition in expired:
         logger.info(
             "Handling competition {}...".format(competition.id))
@@ -66,6 +67,8 @@ def calculate_prizes(db_cursor):
         winners = select_competition_winners(competition, leaderboard)
         assign_competition_winners(winners, competition.id, db_cursor)
         close_competition(competition, leaderboard, db_cursor)
+        result.append((competition, winners))
+    return result
 
 
 def close_competition(competition, leaderboard, db_cursor):
@@ -163,6 +166,17 @@ def assign_competition_winners(winners: List[dict], competition_id: int,
                 "rank": rank,
             }
         )
+
+
+def get_prize_names(competition_id: int, user_rank: int, db_cursor):
+    db_cursor.execute(
+        get_query("select-prize-name.sql"),
+        {
+            "competition_id": competition_id,
+            "user_rank": user_rank
+        }
+    )
+    return [record[0] for record in db_cursor.fetchall()]
 
 
 def consolidate_leaderboards(

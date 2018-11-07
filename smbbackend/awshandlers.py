@@ -40,15 +40,17 @@ USE_SYNCHRONOUS_EXECUTION = os.getenv("SYNCHRONOUS_EXECUTION", "").lower()
 FCM_PUSH_SERVICE = FCMNotification(api_key=os.getenv("FCM_SERVER_KEY"))
 
 
-# TODO: Send a notification for all winners of all closed competitions
 def update_competitions(notify_completion=True):
     """Handler for periodically updating competitions"""
     _setup_logging()
     with _get_db_connection() as connection:
         with connection.cursor() as cursor:
-            calculateprizes.calculate_prizes(cursor)
+            competition_results = calculateprizes.calculate_prizes(cursor)
     if notify_completion:
-        _send_notification(MessageType.competitions_have_been_updated)
+        with _get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                _send_notification(MessageType.competitions_have_been_updated)
+                _notify_competition_winners(competition_results, cursor)
 
 
 # FIXME - send notification after the db_connection `with` block has ended
@@ -316,3 +318,22 @@ def _setup_logging():
     ]
     for log_name in to_disable:
         logging.getLogger(log_name).propagate = False
+
+
+def _notify_competition_winners(competition_results, db_cursor):
+    for competition_info, winners in competition_results:
+        for winner in winners:
+            user_id = winner["user"]
+            user_uuid = utils.get_user_uuid(user_id, db_cursor)
+            prize_names = calculateprizes.get_prize_names(
+                competition_info.id, winner["rank"], db_cursor)
+            devices = get_user_active_devices(db_cursor, user_uuid)
+            for prize_name in prize_names:
+                _send_notification(
+                    MessageType.prize_won,
+                    message_payload={
+                        "prize_name": prize_name
+                    },
+                    use_fcm=True,
+                    fcm_devices=devices
+                )
