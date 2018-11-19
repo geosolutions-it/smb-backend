@@ -15,6 +15,8 @@ import io
 import logging
 import os
 import pathlib
+import tempfile
+from typing import Optional
 import zipfile
 
 import boto3
@@ -45,9 +47,11 @@ def main():
             download_to,
             args.download_workers,
             args.exclude_pattern,
+            args.pattern,
             args.modified_threshold
         )
     logger.info("Validating files...")
+    wkt_dir = pathlib.Path(tempfile.mkdtemp()) if args.save_wkt else None
     total_files, files_with_errors = process_files(
         download_to,
         args.pattern,
@@ -57,14 +61,16 @@ def main():
             "db_name": args.db_name,
             "user": args.db_user,
             "password": args.db_password,
-        }
+        },
+        temp_dir=wkt_dir
     )
     logger.info(
         f"Files processed: {total_files} - with errors: {files_with_errors}")
     logger.info("Done!")
 
 
-def process_files(base_dir: pathlib.Path, item_pattern, db_parameters):
+def process_files(base_dir: pathlib.Path, item_pattern, db_parameters,
+                  temp_dir: pathlib.Path):
     processing_futures = {}
     with concurrent.futures.ProcessPoolExecutor() as executor:
         total_files = 0
@@ -74,7 +80,8 @@ def process_files(base_dir: pathlib.Path, item_pattern, db_parameters):
                 item.name, item_pattern)
             if item.is_file() and pattern_passes:
                 total_files += 1
-                future = executor.submit(process_file, item, db_parameters)
+                future = executor.submit(
+                    process_file, item, db_parameters, temp_dir)
                 processing_futures[future] = item
         for future in concurrent.futures.as_completed(processing_futures):
             file_path = str(processing_futures[future])
@@ -94,7 +101,8 @@ def process_files(base_dir: pathlib.Path, item_pattern, db_parameters):
 
 
 
-def process_file(path: pathlib.Path, db_parameters):
+def process_file(path: pathlib.Path, db_parameters,
+                 wkt_dir: Optional[pathlib.Path]):
     logger.info(f"Processing file {str(path)}...")
     with path.open() as fh:
         raw_data = fh.read()
@@ -115,13 +123,27 @@ def process_file(path: pathlib.Path, db_parameters):
     )
     for segment_data in segments_data:
         logger.debug(f"{segment_data[1].geometry.ExportToWkt()}")
+        if wkt_dir is not None:
+            _save_wkt_to_file(path, wkt_dir, segment_data[1])
     db_connection.close()
     validation_errors = [s[2] for s in segments_data]
     return validation_errors
 
 
+def _save_wkt_to_file(path: pathlib.Path, destination_dir: pathlib.Path,
+                      segment_info: processor.SegmentInfo):
+    session_id = path.stem.rpartition("_")[-1]
+    logger.debug(f"session_id: {session_id}")
+    wkt_file_path = (
+            destination_dir / f"{session_id}_{segment_info.vehicle_type.name}")
+    logger.debug(f"wkt_file_path: {wkt_file_path}")
+    with wkt_file_path.open("w") as fh:
+        fh.write(segment_info.geometry.ExportToWkt())
+    logger.info(f"Saved wkt to {wkt_file_path}")
+
+
 def download_new_files(bucket, download_to, max_workers, exclude: str=None,
-                       modified_since=None):
+                       pattern: str=None, modified_since=None):
     download_futures = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
         for obj_summary in bucket.objects.all():
@@ -131,6 +153,9 @@ def download_new_files(bucket, download_to, max_workers, exclude: str=None,
                 logger.debug(f"Ignoring object {obj_summary.key!r}...")
                 continue
             elif modified_since is not None and modified < modified_since:
+                logger.debug(f"Ignoring object {obj_summary.key!r}...")
+                continue
+            elif pattern is not None and not fnmatch(obj_summary.key, pattern):
                 logger.debug(f"Ignoring object {obj_summary.key!r}...")
                 continue
             elif local_path.exists():
@@ -231,8 +256,15 @@ def _get_parser():
     parser.add_argument(
         "-p",
         "--pattern",
-        help="An fnmatch pattern that is matched against existing local "
-             "files and used to determine which files get processed"
+        help="An fnmatch pattern that is matched against both S3 objects and "
+             "existing local files and used to determine which files get "
+             "downloaded and processed"
+    )
+    parser.add_argument(
+        "-s",
+        "--save-wkt",
+        action="store_true",
+        help="Whether files with WKT for each segment should be saved"
     )
     parser.add_argument(
         "--verbose",

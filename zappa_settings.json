@@ -32,6 +32,7 @@
       "pytest*",
       "tests*"
     ],
+    "timeout_seconds": 60,
     "keep_warm": false,
     "lambda_description": "backend calculations for save-my-bike",
     "manage_roles": false,

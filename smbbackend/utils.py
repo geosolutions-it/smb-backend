@@ -60,7 +60,6 @@ class ValidationError(Enum):
     segment_duration_too_long = 3
 
 
-
 def get_db_connection(dbname, user, password, host="localhost", port="5432"):
     return psycopg2.connect(
         host=host,
