@@ -391,6 +391,7 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
     return result
 
 
+# TODO: This function runs very slowly. Find a faster implementation
 def remove_spatially_similar_points(points: List[PointData], threshold:float,
                                     coordinate_transformer) -> List[PointData]:
     result = []
