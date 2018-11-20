@@ -79,6 +79,7 @@ FullSegmentData = List[Tuple[List["PointData"], "SegmentInfo", List]]
 
 SegmentInfo = namedtuple("SegmentInfo", [
     "geometry",
+    "projected_geometry",
     "start_date",
     "end_date",
     "duration",  # measured in seconds
@@ -90,12 +91,29 @@ SegmentInfo = namedtuple("SegmentInfo", [
 ])
 
 
+def get_coordinate_transformer():
+    source_spatial_reference = osr.SpatialReference()
+    source_spatial_reference.ImportFromEPSG(4326)
+    distance_calculations_spatial_reference = osr.SpatialReference()
+    distance_calculations_spatial_reference.ImportFromEPSG(3857)
+    coordinate_transformer = osr.CoordinateTransformation(
+        source_spatial_reference,
+        distance_calculations_spatial_reference
+    )
+    return coordinate_transformer
+
+
 class PointData(object):
 
-    geometry: ogr.Geometry = None
+    _geometry: ogr.Geometry = None
+    _longitude: float = None
+    _latitude: float = None
+    _x: float = None
+    _y: float = None
     session_id: int = 0
     timestamp: dt.datetime = None
     vehicle_type: VehicleType = None
+    coordinate_transformer = get_coordinate_transformer()
 
     def __init__(self, latitude: float, longitude: float, accuracy: float,
                  speed: float, timestamp: dt.datetime,
@@ -105,8 +123,14 @@ class PointData(object):
         self.session_id = session_id
         self.accuracy = accuracy
         self.speed = speed
-        self.geometry = ogr.Geometry(ogr.wkbPoint)
-        self.geometry.AddPoint(longitude, latitude)
+        self._longitude = longitude
+        self._latitude = latitude
+        self._geometry = ogr.Geometry(ogr.wkbPoint)
+        self._geometry.AddPoint(longitude, latitude)
+        cloned_geom = self._geometry.Clone()
+        cloned_geom.Transform(self.coordinate_transformer)
+        self._projected_geometry = cloned_geom
+        self._x, self._y = self._projected_geometry.GetPoint()[:2]
 
     def __str__(self):
         return (
@@ -140,24 +164,31 @@ class PointData(object):
         )
 
     @property
+    def geometry(self):
+        return self._geometry
+
+    @property
+    def projected_geometry(self):
+        return self._projected_geometry
+
+    @property
     def longitude(self):
-        return self.geometry.GetPoint()[0]
+        return self._longitude
 
     @property
     def latitude(self):
-        return self.geometry.GetPoint()[1]
+        return self._latitude
 
-    def get_distance(self, other_point: "PointData",
-                     coordinate_transformer=None):
-        if coordinate_transformer is not None:
-            cloned_self_geom = self.geometry.Clone()
-            cloned_self_geom.Transform(coordinate_transformer)
-            cloned_other_geom = other_point.geometry.Clone()
-            cloned_other_geom.Transform(coordinate_transformer)
-            result = cloned_self_geom.Distance(cloned_other_geom)
-        else:
-            result = self.geometry.Distance(other_point.geometry)
-        return result
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def y(self):
+        return self._y
+
+    def get_distance(self, other_point: "PointData"):
+        return self.projected_geometry.Distance(other_point.projected_geometry)
 
 
 def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
@@ -249,22 +280,19 @@ def get_session_id(parsed_points: List[PointData]):
     return parsed_points[0].session_id
 
 
-def process_points(points: List[PointData], transformer, **settings):
+def process_points(points: List[PointData], **settings):
     validate_points(points)
     filtered_points = filter_point_data(
         points,
-        transformer,
         accuracy_threshold=settings["points_accuracy_threshold"],
         position_threshold=settings["points_position_threshold"]
     )
     return filtered_points
 
 
-def process_segments(points: List[PointData], transformer, db_cursor,
-                     **settings):
+def process_segments(points: List[PointData], db_cursor, **settings):
     generate_segments_partial = partial(
         generate_segments,
-        transformer=transformer,
         minute_threshold=settings["segments_minute_threshold"],
         distance_thresholds=settings["segments_distance_thresholds"]
     )
@@ -276,7 +304,7 @@ def process_segments(points: List[PointData], transformer, db_cursor,
     final_points = []
     for segment in initial_segments:
         filtered_segment_points = filter_pairwise_segment_points(
-            segment, transformer, settings["segments_pairwise_stddev_coeff"])
+            segment, settings["segments_pairwise_stddev_coeff"])
         final_points.extend(filtered_segment_points)
     if len(final_points) < 2:
         raise exceptions.NonRecoverableError(
@@ -291,7 +319,7 @@ def process_segments(points: List[PointData], transformer, db_cursor,
     )
     result = []
     for segment in filtered_segments:
-        info = get_segment_info(segment, transformer)
+        info = get_segment_info(segment)
 
         type_ = info.vehicle_type
         avg, max_ = settings["segments_speed_thresholds"].get(type_, (0, 0))
@@ -309,13 +337,11 @@ def process_segments(points: List[PointData], transformer, db_cursor,
 def process_data(points: List[PointData], cursor,
                  **settings) -> FullSegmentData:
     """Process the raw collected points into segments"""
-    transformer = get_coordinate_transformer()
-    filtered_points = process_points(points, transformer, **settings)
+    filtered_points = process_points(points, **settings)
     if len(filtered_points) < 2:
         raise exceptions.NonRecoverableError(
             "cannot generate segments, not enough points left")
-    segments_data = process_segments(
-        filtered_points, transformer, cursor, **settings)
+    segments_data = process_segments(filtered_points, cursor, **settings)
     if len(segments_data) == 0:
         raise exceptions.NonRecoverableError("no segments could be generated")
     else:
@@ -354,8 +380,7 @@ def get_track_owner_internal_id(keycloak_uuid: str, db_cursor):
             "Could not determine track owner internal ID")
 
 
-def filter_point_data(points: List["PointData"], coordinate_transformer,
-                      accuracy_threshold: float,
+def filter_point_data(points: List["PointData"], accuracy_threshold: float,
                       position_threshold: float) -> List["PointData"]:
     """Remove parsed points that have invalid data
 
@@ -381,8 +406,7 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
     accurate = [pt for pt in points if pt.accuracy <= accuracy_threshold]
     not_accurate_count = len(points) - len(accurate)
     logger.debug(f"Removed {not_accurate_count} points with bad accuracy")
-    result = remove_spatially_similar_points(
-        accurate, position_threshold, coordinate_transformer)
+    result = remove_spatially_similar_points(accurate, position_threshold)
     spatially_similar_count = len(accurate) - len(result)
     logger.debug(
         "Removed {} points too close to one another".format(
@@ -391,31 +415,24 @@ def filter_point_data(points: List["PointData"], coordinate_transformer,
     return result
 
 
-# TODO: This function runs very slowly. Find a faster implementation
-def remove_spatially_similar_points(points: List[PointData], threshold:float,
-                                    coordinate_transformer) -> List[PointData]:
+def remove_spatially_similar_points(points: List[PointData],
+                                    threshold:float) -> List[PointData]:
+    """Discard points which are near each other in space and time
+
+    The input ``points`` are assumed to be ordered by their timestamp
+    """
+
     result = []
     for point in points:
-        for other_point in result:
-            position_delta = point.get_distance(
-                other_point, coordinate_transformer)
+        # iterate backwards through last 10 items - these are the ones
+        # temporally closer to current point
+        for other_point in result[-1:-11:-1]:
+            position_delta = point.get_distance(other_point)
             if position_delta < threshold:
                 break
         else:
             result.append(point)
     return result
-
-
-def get_coordinate_transformer():
-    source_spatial_reference = osr.SpatialReference()
-    source_spatial_reference.ImportFromEPSG(4326)
-    distance_calculations_spatial_reference = osr.SpatialReference()
-    distance_calculations_spatial_reference.ImportFromEPSG(3857)
-    coordinate_transformer = osr.CoordinateTransformation(
-        source_spatial_reference,
-        distance_calculations_spatial_reference
-    )
-    return coordinate_transformer
 
 
 def parse_point_raw_data(data: str) -> List[PointData]:
@@ -444,8 +461,7 @@ def validate_points(points: List[PointData]):
             "Multiple session identifiers present in input data")
 
 
-def generate_segments(points: List[PointData], transformer,
-                      minute_threshold: int,
+def generate_segments(points: List[PointData], minute_threshold: int,
                       distance_thresholds: dict) -> SegmentData:
     """Split the input points into segments
 
@@ -469,7 +485,7 @@ def generate_segments(points: List[PointData], transformer,
         vehicle_changed = pt.vehicle_type != last_point.vehicle_type
         minutes_passed = (pt.timestamp - last_point.timestamp).seconds / 60
         too_much_time_passed = minutes_passed > minute_threshold
-        last_distance = pt.get_distance(last_point, transformer)
+        last_distance = pt.get_distance(last_point)
         too_far_away = last_distance > distance_thresholds[pt.vehicle_type]
 
         if vehicle_changed:
@@ -589,9 +605,9 @@ def point_intersects_roi(point: PointData, region_of_interest: ogr.Geometry):
 
 def get_segment_intersection_point(segment: List[PointData],
                                    region_of_interest: ogr.Geometry):
-    geom = get_segment_geometry(segment)
+    geographic_geom, projected_geom = get_segment_geometry(segment)
     boundary = region_of_interest.GetBoundary()
-    intersection = geom.Intersection(boundary)
+    intersection = geographic_geom.Intersection(boundary)
     # `intersection` might be single or multi, convert to multi to make uniform
     multi_intersection = ogr.ForceToMultiPoint(intersection)
     first_intersection_geom = multi_intersection.GetGeometryRef(0)
@@ -610,8 +626,9 @@ def get_segment_intersection_point(segment: List[PointData],
         )
         # now adjust the timestamp
         new_segment = [segment[0], result]
-        new_segment_geometry = get_segment_geometry(new_segment)
-        length_factor = new_segment_geometry.Length() / geom.Length()
+        new_segment_projected_geom= get_segment_geometry(new_segment)[1]
+        length_factor = (
+                new_segment_projected_geom.Length() / projected_geom.Length())
         segment_duration = get_segment_duration(segment)
         new_segment_duration = segment_duration * length_factor
         result.timestamp = segment[0].timestamp + dt.timedelta(
@@ -676,11 +693,15 @@ def get_segment_duration(segment: List[PointData]):
     return duration_seconds
 
 
-def get_segment_geometry(segment: List[PointData]):
-    linestring_geom = ogr.Geometry(ogr.wkbLineString)
+def get_segment_geometry(
+        segment: List[PointData]) -> Tuple[ogr.Geometry, ogr.Geometry]:
+    """Return a tuple with both geographic and projected segment geometries"""
+    geographic_geom = ogr.Geometry(ogr.wkbLineString)
+    projected_geom = ogr.Geometry(ogr.wkbLineString)
     for point in segment:
-        linestring_geom.AddPoint(point.longitude, point.latitude)
-    return linestring_geom
+        geographic_geom.AddPoint(point.longitude, point.latitude)
+        projected_geom.AddPoint(point.x, point.y)
+    return geographic_geom, projected_geom
 
 
 def get_length(linestring_geom: ogr.Geometry, coordinate_transformer):
@@ -689,7 +710,7 @@ def get_length(linestring_geom: ogr.Geometry, coordinate_transformer):
     return cloned_geom.Length()
 
 
-def get_segment_speeds(segment, coordinate_transformer):
+def get_segment_speeds(segment):
     """Return the maximum and minimum speed of the segment
 
     Speed is calculated as the rate of change in position of adjacent points
@@ -704,22 +725,23 @@ def get_segment_speeds(segment, coordinate_transformer):
         p2 = segment[p2_index]
         sub_segment = [p1, p2]
         sub_segment_duration = get_segment_duration(sub_segment)
-        geom = get_segment_geometry(sub_segment)
-        sub_segment_length = get_length(geom, coordinate_transformer)
+        geographic_geom, projected_geom = get_segment_geometry(sub_segment)
+        sub_segment_length = projected_geom.Length()
         average_speed = sub_segment_length / sub_segment_duration
         max_speed = max(max_speed, average_speed)
         min_speed = min(min_speed, average_speed)
     return max_speed, min_speed
 
 
-def get_segment_info(segment: List[PointData], coordinate_transformer):
+def get_segment_info(segment: List[PointData]):
     duration = get_segment_duration(segment)
-    segment_geometry = get_segment_geometry(segment)
-    length = get_length(segment_geometry, coordinate_transformer)
+    geographic_geom, projected_geom = get_segment_geometry(segment)
+    length = projected_geom.Length()
     average_speed = length / duration
-    max_speed, min_speed = get_segment_speeds(segment, coordinate_transformer)
+    max_speed, min_speed = get_segment_speeds(segment)
     return SegmentInfo(
-        geometry=segment_geometry,
+        geometry=geographic_geom,
+        projected_geometry=projected_geom,
         start_date=segment[0].timestamp,
         end_date=segment[-1].timestamp,
         duration=duration,
@@ -814,7 +836,7 @@ def apply_segment_filters(segments: SegmentData,
     return current_segments
 
 
-def filter_pairwise_segment_points(points, transformer, stddev_coeffs):
+def filter_pairwise_segment_points(points, stddev_coeffs):
     """Filter out segment points based on anomalous speed
 
     Anomalies are detected by getting the mean speed and stddev for all points
@@ -824,7 +846,7 @@ def filter_pairwise_segment_points(points, transformer, stddev_coeffs):
 
     speeds = []
     for p1, p2 in zip(points, points[1:]):
-        info = get_segment_info([p1, p2], transformer)
+        info = get_segment_info([p1, p2])
         coeff = stddev_coeffs.get(info.vehicle_type, 1)
         speeds.append((p1, p2, info.average_speed))
     speeds_vector = np.array(speeds)
@@ -840,23 +862,10 @@ def filter_pairwise_segment_points(points, transformer, stddev_coeffs):
     valid_segments_selection = np.where(speeds_vector[:, 2] <= speed_threhsold)
     valid_p1s = speeds_vector[valid_segments_selection][:, 0]
     filtered_points = list(valid_p1s)
-
-    # if speeds_vector[0, 2] <= speed_threhsold:  # checking second point
-    #     filtered_points.insert(1, speeds_vector, 0, 1)
-
     if speeds_vector[-1, 2] <= speed_threhsold:  # checking last point
         filtered_points.append(speeds_vector[-1, 1])
     logger.debug(f"removed {len(points) - len(filtered_points)} points")
     return filtered_points
-    # invalid_segments_selection = np.where(
-    #     speeds_vector[:, 2] > speed_threhsold)
-    # invalid_p1s = speeds_vector[invalid_segments_selection][:, 0]
-    # invalid_p2s = speeds_vector[invalid_segments_selection][:, 1]
-    # all_invalid = set(invalid_p1s).union(set(invalid_p2s))
-    # filtered_points = set(points).difference(all_invalid)
-    # logger.debug("removed {} points".format(
-    #     len(points) - len(filtered_points)))
-    # return sorted(list(filtered_points), key=lambda pt: pt.timestamp)
 
 
 def is_track_valid(segments_data):
