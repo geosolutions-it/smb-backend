@@ -110,19 +110,59 @@ class PointData(object):
     _latitude: float = None
     _x: float = None
     _y: float = None
+    acceleration_x: float = None
+    acceleration_y: float = None
+    acceleration_z: float = None
+    accuracy: float = None
+    battery_consumption_per_hour: float = None
+    battery_level: float = None
+    coordinate_transformer = get_coordinate_transformer()
+    device_bearing: float = None
+    device_pitch: float = None
+    device_roll: float = None
+    elevation: float = None
+    gps_bearing: float = None
+    humidity: float = None
+    lumen: float = None
+    pressure: float = None
+    proximity: float = None
+    serial_version_uid: str = None
     session_id: int = 0
+    speed: float = None
+    temperature: float = None
     timestamp: dt.datetime = None
     vehicle_type: VehicleType = None
-    coordinate_transformer = get_coordinate_transformer()
 
-    def __init__(self, latitude: float, longitude: float, accuracy: float,
-                 speed: float, timestamp: dt.datetime,
-                 vehicle_type: VehicleType, session_id: int):
+    def __init__(self, acceleration_x:float, acceleration_y: float,
+                 acceleration_z:float, accuracy:float,
+                 battery_consumption_per_hour: float, battery_level: float,
+                 device_bearing: float, device_pitch: float,
+                 device_roll: float, elevation: float, gps_bearing: float,
+                 humidity: float, lumen: float, pressure: float,
+                 proximity: float, serial_version_uid: str, session_id: int,
+                 speed: float, temperature: float, timestamp: dt.datetime,
+                 vehicle_type: VehicleType, latitude: float, longitude: float):
+        self.acceleration_x: float = acceleration_x
+        self.acceleration_y: float = acceleration_y
+        self.acceleration_z: float = acceleration_z
+        self.accuracy = accuracy
+        self.battery_consumption_per_hour: float = battery_consumption_per_hour
+        self.battery_level: float = battery_level
+        self.device_bearing: float = device_bearing
+        self.device_pitch: float = device_pitch
+        self.device_roll: float = device_roll
+        self.elevation: float = elevation
+        self.gps_bearing: float = gps_bearing
+        self.humidity: float = humidity
+        self.lumen: float = lumen
+        self.pressure: float = pressure
+        self.proximity: float = proximity
+        self.serial_version_uid = serial_version_uid
+        self.session_id = session_id
+        self.speed = speed
+        self.temperature: float = temperature
         self.timestamp = timestamp
         self.vehicle_type = vehicle_type
-        self.session_id = session_id
-        self.accuracy = accuracy
-        self.speed = speed
         self._longitude = longitude
         self._latitude = latitude
         self._geometry = ogr.Geometry(ogr.wkbPoint)
@@ -153,14 +193,30 @@ class PointData(object):
     def from_raw_point(cls, raw_point: str):
         info = [i.strip() for i in raw_point.split(",")]
         return cls(
-            latitude=float(info[12]),
-            longitude=float(info[13]),
+            acceleration_x=float(info[0]),
+            acceleration_y=float(info[1]),
+            acceleration_z=float(info[2]),
             accuracy=float(info[3]),
+            battery_consumption_per_hour=float(info[4]),
+            battery_level=float(info[5]),
+            device_bearing=float(info[6]),
+            device_pitch=float(info[7]),
+            device_roll=float(info[8]),
+            elevation=float(info[9]),
+            gps_bearing=float(info[10]),
+            humidity=float(info[11]),
+            lumen=float(info[14]),
+            pressure=float(info[15]),
+            proximity=float(info[16]),
+            serial_version_uid=info[22],
+            session_id=int(info[17]),
+            speed=float(info[18]),
+            temperature=float(info[19]),
             timestamp=dt.datetime.fromtimestamp(
                 int(info[20]) / 1000).replace(tzinfo=pytz.utc),
-            speed=float(info[18]),
             vehicle_type=VehicleType(int(info[21])),
-            session_id=int(info[17])
+            latitude=float(info[12]),
+            longitude=float(info[13]),
         )
 
     @property
@@ -247,12 +303,29 @@ def insert_points(track_id: int, segments: FullSegmentData, db_cursor):
             db_cursor.execute(
                 query,
                 {
-                    "vehicle_type": point.vehicle_type.name,
+                    "acceleration_x": point.acceleration_x,
+                    "acceleration_y": point.acceleration_y,
+                    "acceleration_z": point.acceleration_z,
+                    "accuracy": point.accuracy,
+                    "battery_consumption": point.battery_consumption_per_hour,
+                    "battery_level": point.battery_level,
+                    "device_bearing": point.device_bearing,
+                    "device_pitch": point.device_pitch,
+                    "device_roll": point.device_roll,
+                    "elevation": point.elevation,
+                    "gps_bearing": point.gps_bearing,
+                    "humidity": point.humidity,
+                    "lumen": point.lumen,
+                    "pressure": point.pressure,
+                    "proximity": point.proximity,
+                    "speed": point.speed,
+                    "temperature": point.temperature,
+                    "session_id": point.session_id,
                     "track_id": track_id,
+                    "timestamp": point.timestamp,
+                    "vehicle_type": point.vehicle_type.name,
                     "longitude": point.longitude,
                     "latitude": point.latitude,
-                    "sessionid": point.session_id,
-                    "timestamp": point.timestamp,
                 }
             )
 
