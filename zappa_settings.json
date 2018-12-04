@@ -30,7 +30,9 @@
       "boto3*",
       "botocore*",
       "pytest*",
-      "tests*"
+      "tests*",
+      ".idea",
+      ".pytest_cache"
     ],
     "timeout_seconds": 300,
     "keep_warm": false,

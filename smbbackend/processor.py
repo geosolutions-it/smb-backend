@@ -689,13 +689,30 @@ def get_segment_intersection_point(segment: List[PointData],
     else:
         intersection_coords = first_intersection_geom.GetPoint()
         result = PointData(
-            latitude=intersection_coords[1],
-            longitude=intersection_coords[0],
+            acceleration_x=segment[1].acceleration_x,
+            acceleration_y=segment[1].acceleration_y,
+            acceleration_z=segment[1].acceleration_z,
             accuracy=segment[1].accuracy,
+            battery_consumption_per_hour=segment[
+                1].battery_consumption_per_hour,
+            battery_level=segment[1].battery_level,
+            device_bearing=segment[1].device_bearing,
+            device_pitch=segment[1].device_pitch,
+            device_roll=segment[1].device_roll,
+            elevation=segment[1].elevation,
+            gps_bearing=segment[1].gps_bearing,
+            humidity=segment[1].humidity,
+            lumen=segment[1].lumen,
+            pressure=segment[1].pressure,
+            proximity=segment[1].proximity,
+            serial_version_uid=segment[1].serial_version_uid,
+            session_id=segment[1].session_id,
             speed=segment[1].speed,
+            temperature=segment[1].temperature,
             timestamp=segment[1].timestamp,
             vehicle_type=segment[1].vehicle_type,
-            session_id=segment[1].session_id
+            latitude=intersection_coords[1],
+            longitude=intersection_coords[0],
         )
         # now adjust the timestamp
         new_segment = [segment[0], result]
