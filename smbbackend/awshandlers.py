@@ -153,12 +153,10 @@ def get_new_track_info(db_cursor, bucket_name, object_key, **kwargs):
 def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
                  notify_completion=True, **kwargs) -> Tuple[int, bool]:
     try:
-        segments_data, track_id, session_id = processor.ingest_s3_data(
-            s3_bucket_name=bucket_name,
-            object_key=object_key,
-            owner_uuid=owner_uuid,
-            db_cursor=db_cursor
-        )
+
+        raw_data = processor.get_data_from_s3(bucket_name, object_key)
+        segments_data, track_id, session_id = processor.ingest_data(
+            raw_data, owner_uuid, db_cursor)
         is_valid = processor.is_track_valid(segments_data)
         validation_errors = [s[2] for s in segments_data]
         flattened_errors = _flatten_validation_errors(validation_errors)

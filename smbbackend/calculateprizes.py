@@ -1,6 +1,6 @@
 #########################################################################
 #
-# Copyright 2018, GeoSolutions Sas.
+# Copyright 2019, GeoSolutions Sas.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -45,7 +45,6 @@ CompetitionInfo = namedtuple("CompetitionInfo", [
 CompetitorInfo = namedtuple("CompetitorInfo", [
     "points",
     "user_id",
-    "age_range",
     "absolute_score"
 ])
 
@@ -113,9 +112,7 @@ def get_leaderboard(competition: CompetitionInfo, db_cursor) -> List[dict]:
         criterium_enumeration = PrizeCriterium(criterium)
         handler = criteria_handlers[criterium_enumeration]
         ranking = handler(
-            competition.start_date,
-            competition.end_date,
-            competition.age_groups,
+            competition,
             threshold,
             db_cursor
         )
@@ -137,8 +134,7 @@ def get_user_score(competition: CompetitionInfo, user_id, db_cursor) -> dict:
         criterium_enumeration = PrizeCriterium(criterium)
         handler = criteria_handlers[criterium_enumeration]
         score = handler(
-            competition.start_date,
-            competition.end_date,
+            competition,
             user_id,
             db_cursor
         )
@@ -152,17 +148,28 @@ def select_competition_winners(competition: CompetitionInfo,
     return leaderboard[:winner_threshold]
 
 
-def assign_competition_winners(winners: List[dict], competition_id: int,
-                               db_cursor):
+def assign_competition_winners(
+        winners: List[dict],
+        competition_id: int,
+        db_cursor
+):
     for index, winner in enumerate(winners):
         rank = index + 1
         logger.info("Assigning user {} as a winner (rank: {}) of competition "
                     "{}...".format(winner["user"], rank, competition_id))
         db_cursor.execute(
-            get_query("insert-competition-winner.sql"),
+            get_query("select-competitionparticipant.sql"),
             {
                 "competition_id": competition_id,
-                "user_id": winner["user"],
+                "user_id": winner["user"]
+            }
+        )
+        participant_record = db_cursor.fetchone()
+        participant_id = participant_record[0]
+        db_cursor.execute(
+            get_query("insert-competition-winner.sql"),
+            {
+                "participant_id": participant_id,
                 "rank": rank,
             }
         )
@@ -180,10 +187,11 @@ def get_prize_names(competition_id: int, user_rank: int, db_cursor):
 
 
 def consolidate_leaderboards(
-        leaderboards: List[LeaderBoardInfo]) -> List[dict]:
+        leaderboards: List[LeaderBoardInfo]
+) -> List[dict]:
     participants = get_unique_participants([b[1] for b in leaderboards])
     null_competitor = CompetitorInfo(
-        points=0, user_id=None, age_range=None, absolute_score=0)
+        points=0, user_id=None, absolute_score=0)
     final_leaderboard = {}
     for participant, board_info in product(participants, leaderboards):
         criterium, board = board_info
@@ -213,16 +221,20 @@ def get_unique_participants(leaderboards: List[dict]) -> List[str]:
     return list(all_participants)
 
 
-def get_emissions_ranking(pollutant, start_date, end_date, age_groups,
-                          winner_threshold, db_cursor) -> dict:
+def get_emissions_ranking(
+        pollutant: str,
+        competition: CompetitionInfo,
+        winner_threshold: int,
+        db_cursor
+) -> dict:
     query_text = get_query("select-pollutant-savings-leaderboard.sql")
     formatted_query = query_text.format(pollutant_name=pollutant)
     db_cursor.execute(
         formatted_query,
         {
-            "start_date": start_date,
-            "end_date": end_date,
-            "age_groups": age_groups,
+            "competition_id": competition.id,
+            "start_date": competition.start_date,
+            "end_date": competition.end_date,
             "threshold": winner_threshold,
         }
     )
@@ -230,17 +242,26 @@ def get_emissions_ranking(pollutant, start_date, end_date, age_groups,
     for row in db_cursor.fetchall():
         info = CompetitorInfo(*row)
         leaderboard[info.user_id] = info
+    else:
+        if len(leaderboard) == 0:
+            logger.debug("Leaderboard is empty")
     return leaderboard
 
 
-def get_emissions_score(pollutant, start_date, end_date, user_id, db_cursor):
+def get_emissions_score(
+        pollutant: str,
+        competition: CompetitionInfo,
+        user_id: int,
+        db_cursor
+):
     query_text = get_query("select-user-score-pollutant-savings.sql")
     formatted_query = query_text.format(pollutant_name=pollutant)
     db_cursor.execute(
         formatted_query,
         {
-            "start_date": start_date,
-            "end_date": end_date,
+            "competition_id": competition.id,
+            "start_date": competition.start_date,
+            "end_date": competition.end_date,
             "user_id": user_id,
         }
     )

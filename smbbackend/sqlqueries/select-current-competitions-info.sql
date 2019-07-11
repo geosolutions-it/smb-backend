@@ -8,6 +8,7 @@ SELECT
   c.end_date,
   c.age_groups
 FROM prizes_competition AS c
-  LEFT OUTER JOIN prizes_winner AS w ON (c.id = w.competition_id)
+  JOIN prizes_competitionparticipant AS cp ON (c.id = cp.competition_id)
+  LEFT OUTER JOIN prizes_winner AS w ON (cp.id = w.participant_id)
 WHERE c.start_date <= %(relevant_date)s
-  AND w.user_id IS null
+  AND w.participant_id IS null

@@ -247,11 +247,12 @@ class PointData(object):
         return self.projected_geometry.Distance(other_point.projected_geometry)
 
 
-def ingest_s3_data(s3_bucket_name: str, object_key: str, owner_uuid: str,
-                   db_cursor) -> Tuple[FullSegmentData, int, int]:
+def ingest_data(
+        raw_data: str,
+        owner_uuid: str,
+        db_cursor
+):
     """Ingest track data into smb database"""
-    logger.debug("Retrieving data from S3 bucket...")
-    raw_data = get_data_from_s3(s3_bucket_name, object_key)
     points = parse_point_raw_data(raw_data)
     session_id = get_session_id(points)
     segments_data = process_data(
