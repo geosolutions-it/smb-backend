@@ -1,3 +1,4 @@
 --requirement production.txt
 
 pytest==3.8.0
+pytest-raises==0.10
