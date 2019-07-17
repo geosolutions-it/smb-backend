@@ -16,6 +16,7 @@ import logging
 import os
 import pathlib
 
+from osgeo import ogr
 import psycopg2
 
 logger = logging.getLogger(__name__)
@@ -113,3 +114,10 @@ def get_user_uuid(user_id: int, db_cursor):
     )
     result = db_cursor.fetchone()
     return result[0] if result is not None else None
+
+
+def get_region_of_interest(db_cursor):
+    db_cursor.execute(get_query("select-region-of-interest.sql"))
+    wkb = bytes(db_cursor.fetchone()[0])
+    geometry = ogr.CreateGeometryFromWkb(wkb)
+    return geometry

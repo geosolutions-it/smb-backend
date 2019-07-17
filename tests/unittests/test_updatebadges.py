@@ -13,7 +13,6 @@ from unittest import mock
 
 import psycopg2
 import pytest
-import pytz
 
 from smbbackend import updatebadges
 
@@ -24,17 +23,19 @@ DATE_FMT = "%Y-%m-%d"
 
 
 @pytest.mark.parametrize(
-    "badge_name, badge_target, track_created, existing, expected", [
-        (
+    "badge_name, badge_target, track_created, existing, expected",
+    [
+        pytest.param(
             "data_collector_level0",
             1,
             "2018-01-01",
             [
                 "2018-01-01",
             ],
-            1
+            1,
+            id="level0_pass"
         ),
-        (
+        pytest.param(
             "data_collector_level1",
             7,
             "2018-02-01",
@@ -47,9 +48,10 @@ DATE_FMT = "%Y-%m-%d"
                 "2018-01-27",
                 "2018-01-26",
             ],
-            7
+            7,
+            id="level1_pass"
         ),
-        (
+        pytest.param(
             "data_collector_level1",
             7,
             "2018-02-01",
@@ -62,9 +64,10 @@ DATE_FMT = "%Y-%m-%d"
                 "2018-01-26",
                 "2018-01-25",
             ],
-            0
+            0,
+            id="level1_fail"
         ),
-        (
+        pytest.param(
             "data_collector_level2",
             14,
             "2018-02-01",
@@ -84,9 +87,10 @@ DATE_FMT = "%Y-%m-%d"
                 "2018-01-20",
                 "2018-01-19",
             ],
-            14
+            14,
+            id="level2_pass"
         ),
-        (
+        pytest.param(
             "data_collector_level2",
             14,
             "2018-02-01",
@@ -106,9 +110,10 @@ DATE_FMT = "%Y-%m-%d"
                 "2017-01-20",
                 "2018-01-19",
             ],
-            0
+            0,
+            id="level2_fail"
         ),
-        (
+        pytest.param(
             "data_collector_level3",
             30,
             "2018-02-01",
@@ -144,9 +149,10 @@ DATE_FMT = "%Y-%m-%d"
                 "2018-01-04",
                 "2018-01-03",
             ],
-            30
+            30,
+            id="level3_pass"
         ),
-        (
+        pytest.param(
             "data_collector_level3",
             30,
             "2018-02-01",
@@ -182,17 +188,11 @@ DATE_FMT = "%Y-%m-%d"
                 "2017-01-04",
                 "2018-01-03",
             ],
-            0
+            0,
+            id="level3_fail"
         ),
-    ], ids=[
-        "level0_pass",
-        "level1_pass",
-        "level1_fail",
-        "level2_pass",
-        "level2_fail",
-        "level3_pass",
-        "level3_fail",
-])
+    ]
+)
 def test_handle_data_collector_badge(badge_name, badge_target, track_created,
                                      existing, expected):
     badge = updatebadges.BadgeInfo(
