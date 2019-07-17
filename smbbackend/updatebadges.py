@@ -120,6 +120,7 @@ def handle_data_collector_badge(badge: BadgeInfo, track: TrackInfo, db_cursor):
     db_cursor.execute(
         get_query("select-count-tracks-by-date-interval.sql"),
         {
+            "owner_id": track.owner_id,
             "start_date": start_date,
             "end_date": end_date,
         }
@@ -150,7 +151,8 @@ def handle_biker_badge(badge: BadgeInfo, track: TrackInfo,
         start_bound = get_week_bounds(
             reference_date - dt.timedelta(days=week_offset_days)
         )[0]
-        num_bike_usages = get_num_bike_usages(start_bound, end_bound, db_cursor)
+        num_bike_usages = get_num_bike_usages(
+            start_bound, end_bound, track.owner_id, db_cursor)
     else:
         num_bike_usages = 0
     return num_bike_usages
@@ -219,17 +221,23 @@ def get_total_distance(user_id, vehicle_types: List[VehicleType], db_cursor):
     return db_cursor.fetchone()[0]
 
 
-def award_badge(bage_id, db_cursor):
+def award_badge(badge_id, db_cursor):
     db_cursor.execute(
         get_query("update-badge-award.sql"),
-        {"badge_id": bage_id}
+        {"badge_id": badge_id}
     )
 
 
-def get_num_bike_usages(start_dt: dt.datetime, end_dt: dt.datetime, db_cursor):
+def get_num_bike_usages(
+        start_dt: dt.datetime,
+        end_dt: dt.datetime,
+        owner_id: int,
+        db_cursor
+):
     db_cursor.execute(
         get_query("select-count-bike-rides.sql"),
         {
+            "owner_id": owner_id,
             "start": start_dt.isoformat(),
             "end": end_dt.isoformat(),
         }

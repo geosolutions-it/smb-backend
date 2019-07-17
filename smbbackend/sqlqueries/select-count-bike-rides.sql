@@ -7,4 +7,5 @@ WHERE s.start_date >= %(start)s
   AND s.start_date < %(end)s
   AND s.vehicle_type = 'bike'
   AND t.is_valid = TRUE
+  AND t.owner_id = %(owner_id)s
 GROUP BY date_trunc('day', s.start_date)
