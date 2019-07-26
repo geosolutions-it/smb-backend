@@ -608,125 +608,6 @@ def filter_invalid_temporal_points(segments: SegmentData,
     return _reconcile_segments(segments, test_func=_check_temporal_bounds)
 
 
-def filter_points_outside_region_of_interest(segments: SegmentData,
-                                             region_of_interest: ogr.Geometry):
-
-
-    def _check_intersection(point: PointData):
-        logger.debug(f"check_intersection called with {point}")
-        intersects_roi = point_intersects_roi(point, region_of_interest)
-        if not intersects_roi:
-            logger.debug("Point is outside region of interest")
-        return intersects_roi
-
-
-    def _segment_point_invalid_region_of_interest(new_segment,
-                                                  original_segment,
-                                                  point,
-                                                  point_index,
-                                                  result):
-        """If current point is outside region of interest we discard it and
-        start a new segment for subsequent points. Additionally, we check if
-        it is possible to create a new point at the intersection with the
-        region of interest in place of the current one.
-
-        """
-
-        try:
-            previous_point = original_segment[point_index-1]
-        except IndexError:
-            pass  # there is no previous point on the segment
-        else:
-            if _check_intersection(previous_point):
-                sub_segment = [previous_point, point]
-                intersection_point = get_segment_intersection_point(
-                    sub_segment, region_of_interest)
-                new_segment.append(intersection_point)
-        # discard this point and start a new segment
-        if len(new_segment) > 0:
-            result.append(new_segment[:])
-            new_segment.clear()
-        try:
-            next_point = original_segment[point_index+1]
-        except IndexError:
-            pass  # there is no next point on the segment
-        else:
-            if _check_intersection(next_point):
-                sub_segment = [point, next_point]
-                intersection_point = get_segment_intersection_point(
-                    sub_segment, region_of_interest)
-                if intersection_point is not None:
-                    new_segment.append(intersection_point)
-
-    return _reconcile_segments(
-        segments,
-        _check_intersection,
-        point_invalid_func=_segment_point_invalid_region_of_interest
-    )
-
-
-def point_intersects_roi(point: PointData, region_of_interest: ogr.Geometry):
-    for i in range(region_of_interest.GetGeometryCount()):
-        sub_geom = region_of_interest.GetGeometryRef(i)
-        intersects = sub_geom.Intersects(point.geometry)
-        if intersects:
-            result = True
-            break
-    else:
-        result = False
-    return result
-
-
-def get_segment_intersection_point(segment: List[PointData],
-                                   region_of_interest: ogr.Geometry):
-    geographic_geom, projected_geom = get_segment_geometry(segment)
-    boundary = region_of_interest.GetBoundary()
-    intersection = geographic_geom.Intersection(boundary)
-    # `intersection` might be single or multi, convert to multi to make uniform
-    multi_intersection = ogr.ForceToMultiPoint(intersection)
-    first_intersection_geom = multi_intersection.GetGeometryRef(0)
-    if first_intersection_geom is None:
-        result = None
-    else:
-        intersection_coords = first_intersection_geom.GetPoint()
-        result = PointData(
-            acceleration_x=segment[1].acceleration_x,
-            acceleration_y=segment[1].acceleration_y,
-            acceleration_z=segment[1].acceleration_z,
-            accuracy=segment[1].accuracy,
-            battery_consumption_per_hour=segment[
-                1].battery_consumption_per_hour,
-            battery_level=segment[1].battery_level,
-            device_bearing=segment[1].device_bearing,
-            device_pitch=segment[1].device_pitch,
-            device_roll=segment[1].device_roll,
-            elevation=segment[1].elevation,
-            gps_bearing=segment[1].gps_bearing,
-            humidity=segment[1].humidity,
-            lumen=segment[1].lumen,
-            pressure=segment[1].pressure,
-            proximity=segment[1].proximity,
-            serial_version_uid=segment[1].serial_version_uid,
-            session_id=segment[1].session_id,
-            speed=segment[1].speed,
-            temperature=segment[1].temperature,
-            timestamp=segment[1].timestamp,
-            vehicle_type=segment[1].vehicle_type,
-            latitude=intersection_coords[1],
-            longitude=intersection_coords[0],
-        )
-        # now adjust the timestamp
-        new_segment = [segment[0], result]
-        new_segment_projected_geom= get_segment_geometry(new_segment)[1]
-        length_factor = (
-                new_segment_projected_geom.Length() / projected_geom.Length())
-        segment_duration = get_segment_duration(segment)
-        new_segment_duration = segment_duration * length_factor
-        result.timestamp = segment[0].timestamp + dt.timedelta(
-            seconds=new_segment_duration)
-    return result
-
-
 def _segment_point_valid(new_segment: List, original_segment: List[PointData],
                          point: PointData, point_index: int, result: List):
     new_segment.append(point)
@@ -764,13 +645,6 @@ def filter_small_segments(segments: SegmentData,
     logger.debug(
         "filtering out segments with less than {} points...".format(threshold))
     return [s for s in segments if len(s) > threshold]
-
-
-def get_region_of_interest(db_cursor):
-    db_cursor.execute(get_query("select-region-of-interest.sql"))
-    wkb = bytes(db_cursor.fetchone()[0])
-    geometry = ogr.CreateGeometryFromWkb(wkb)
-    return geometry
 
 
 def get_segment_duration(segment: List[PointData]):
@@ -893,7 +767,6 @@ def apply_segment_filters(segments: SegmentData,
                           db_cursor,
                           small_segments_threshold: int=1) -> SegmentData:
     """Filter out invalid segments and points according to various criteria"""
-    region_of_interest = get_region_of_interest(db_cursor)
     filters = [
         (
             filter_invalid_temporal_points,
@@ -902,11 +775,6 @@ def apply_segment_filters(segments: SegmentData,
                 "lower_bound": temporal_lower_bound,
                 "upper_bound": temporal_upper_bound
             }
-        ),
-        (
-            filter_points_outside_region_of_interest,
-            (region_of_interest,),
-            None
         ),
         (
             filter_small_segments,

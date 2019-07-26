@@ -40,6 +40,7 @@ CompetitionInfo = namedtuple("CompetitionInfo", [
     "start_date",
     "end_date",
     "age_groups",
+    "region_of_interest"
 ])
 
 CompetitorInfo = namedtuple("CompetitorInfo", [
@@ -227,14 +228,16 @@ def get_emissions_ranking(
         winner_threshold: int,
         db_cursor
 ) -> dict:
-    query_text = get_query("select-pollutant-savings-leaderboard.sql")
+    if competition.region_of_interest is not None:
+        query_path = "select-pollutant-savings-leaderboard-with-roi.sql"
+    else:
+        query_path = "select-pollutant-savings-leaderboard.sql"
+    query_text = get_query(query_path)
     formatted_query = query_text.format(pollutant_name=pollutant)
     db_cursor.execute(
         formatted_query,
         {
             "competition_id": competition.id,
-            "start_date": competition.start_date,
-            "end_date": competition.end_date,
             "threshold": winner_threshold,
         }
     )
@@ -254,14 +257,16 @@ def get_emissions_score(
         user_id: int,
         db_cursor
 ):
-    query_text = get_query("select-user-score-pollutant-savings.sql")
+    if competition.region_of_interest is not None:
+        query_path = "select-user-score-pollutant-savings-with-roi.sql"
+    else:
+        query_path = "select-user-score-pollutant-savings.sql"
+    query_text = get_query(query_path)
     formatted_query = query_text.format(pollutant_name=pollutant)
     db_cursor.execute(
         formatted_query,
         {
             "competition_id": competition.id,
-            "start_date": competition.start_date,
-            "end_date": competition.end_date,
             "user_id": user_id,
         }
     )
