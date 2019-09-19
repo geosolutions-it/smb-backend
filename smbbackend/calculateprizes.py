@@ -190,6 +190,17 @@ def get_prize_names(competition_id: int, user_rank: int, db_cursor):
 def consolidate_leaderboards(
         leaderboards: List[LeaderBoardInfo]
 ) -> List[dict]:
+    """Return a sorted list with consolidated leaderboards
+
+    A user's leaderboards are consolidated into a single one by averaging the
+    points gotten in each leaderboard.
+
+    The final leaderboard is sorted in reverse order according to the final
+    score of each user. This means that the winner shall be the first in the
+    list.
+
+    """
+
     participants = get_unique_participants([b[1] for b in leaderboards])
     null_competitor = CompetitorInfo(
         points=0, user_id=None, absolute_score=0)
@@ -211,7 +222,7 @@ def consolidate_leaderboards(
                 "criteria_points": data["boards"]
             }
         )
-    return sorted(total, key=lambda i: i["points"])
+    return sorted(total, key=lambda i: i["points"], reverse=True)
 
 
 def get_unique_participants(leaderboards: List[dict]) -> List[str]:

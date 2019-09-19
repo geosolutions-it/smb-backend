@@ -320,11 +320,12 @@ def _setup_logging():
 
 def _notify_competition_winners(competition_results, db_cursor):
     for competition_info, winners in competition_results:
-        for winner in winners:
+        for index, winner in enumerate(winners):
+            competition_rank = index + 1
             user_id = winner["user"]
             user_uuid = utils.get_user_uuid(user_id, db_cursor)
             prize_names = calculateprizes.get_prize_names(
-                competition_info.id, winner["rank"], db_cursor)
+                competition_info.id, competition_rank, db_cursor)
             devices = get_user_active_devices(db_cursor, user_uuid)
             for prize_name in prize_names:
                 _send_notification(
