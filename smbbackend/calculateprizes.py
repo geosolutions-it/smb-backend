@@ -16,12 +16,10 @@ This module should be called periodically
 
 from collections import namedtuple
 from functools import partial
-from itertools import product
 import datetime as dt
 import json
 import logging
-from typing import List
-from typing import Tuple
+import typing
 
 import pytz
 
@@ -30,7 +28,6 @@ from ._constants import PrizeCriterium
 
 logger = logging.getLogger(__name__)
 
-LeaderBoardInfo = Tuple[PrizeCriterium, dict]
 
 CompetitionInfo = namedtuple("CompetitionInfo", [
     "id",
@@ -49,8 +46,12 @@ CompetitorInfo = namedtuple("CompetitorInfo", [
     "absolute_score"
 ])
 
+LeaderBoardInfo = typing.Tuple[PrizeCriterium, typing.List[CompetitorInfo]]
 
-def calculate_prizes(db_cursor) -> List[Tuple[CompetitionInfo, List[dict]]]:
+
+def calculate_prizes(
+        db_cursor
+) -> typing.List[typing.Tuple[CompetitionInfo, typing.List[dict]]]:
     """Calculate results for currently open competitions"""
     now = dt.datetime.now(pytz.utc)
     open_competitions = get_open_competitions(db_cursor)
@@ -82,7 +83,7 @@ def close_competition(competition, leaderboard, db_cursor):
     )
 
 
-def get_open_competitions(db_cursor) -> List[CompetitionInfo]:
+def get_open_competitions(db_cursor) -> typing.List[CompetitionInfo]:
     """Get information from the currently open competitions
 
     Open competitions are those whose start_date is lower than the current
@@ -98,7 +99,10 @@ def get_open_competitions(db_cursor) -> List[CompetitionInfo]:
     return [CompetitionInfo(*row) for row in db_cursor.fetchall()]
 
 
-def get_leaderboard(competition: CompetitionInfo, db_cursor) -> List[dict]:
+def get_leaderboard(
+        competition: CompetitionInfo,
+        db_cursor
+) -> typing.List[dict]:
     criteria_handlers = {
         PrizeCriterium.saved_so2: partial(get_emissions_ranking, "so2_saved"),
         PrizeCriterium.saved_co2: partial(get_emissions_ranking, "co2_saved"),
@@ -107,19 +111,77 @@ def get_leaderboard(competition: CompetitionInfo, db_cursor) -> List[dict]:
         PrizeCriterium.saved_pm10: partial(
             get_emissions_ranking, "pm10_saved"),
     }
-    criteria_leaderboards = []
+    criteria_leaderboards = {}
     threshold = len(competition.criteria) * competition.winner_threshold
     for criterium in competition.criteria:
         criterium_enumeration = PrizeCriterium(criterium)
         handler = criteria_handlers[criterium_enumeration]
-        ranking = handler(
+        criteria_leaderboards[criterium_enumeration.value] = handler(
             competition,
             threshold,
             db_cursor
         )
-        criteria_leaderboards.append((criterium_enumeration, ranking))
     logger.debug("criteria_leaderboards: {}".format(criteria_leaderboards))
     return consolidate_leaderboards(criteria_leaderboards)
+
+
+def consolidate_leaderboards(
+        leaderboards: typing.Dict[PrizeCriterium, typing.List[CompetitorInfo]]
+) -> typing.List[dict]:
+    """Return a sorted list with consolidated leaderboards
+
+    A user's leaderboards are consolidated into a single one by averaging the
+    points gotten in each leaderboard.
+
+    The final leaderboard is sorted in reverse order according to the final
+    score of each user. This means that the winner shall be the first in the
+    list.
+
+    """
+
+    summed_participant_scores = sum_participant_scores(leaderboards)
+    score_divisor = len(leaderboards)
+    final_leaderboard = []
+    for user_id, user_scores in summed_participant_scores.items():
+        final_leaderboard.append(
+            {
+                "user": user_id,
+                "points": user_scores["points"] / score_divisor,
+                "criteria_points": user_scores["boards"],
+            }
+        )
+    return sorted(final_leaderboard, key=lambda i: i["points"], reverse=True)
+
+
+def sum_participant_scores(
+        leaderboards: typing.Dict[
+            PrizeCriterium,
+            typing.List[CompetitorInfo]
+        ]
+) -> typing.Dict:
+    """Sum participant's scores across all criteria of a competition
+
+    A competition may use several criteria in order to attribute winners.
+    This function takes the leaderboards for each criterium and returns
+    an aggregated result per user.
+
+    """
+
+    consolidated_scores = {}
+    for criterium, leaderboard in leaderboards.items():
+        for competitor_info in leaderboard:
+            user_scores = consolidated_scores.setdefault(
+                competitor_info.user_id,
+                {
+                    "points": 0,
+                    "absolute_score": 0,
+                    "boards": {}
+                }
+            )
+            user_scores["points"] += competitor_info.points
+            user_scores["absolute_score"] += competitor_info.absolute_score
+            user_scores["boards"][criterium] = competitor_info.absolute_score
+    return consolidated_scores
 
 
 def get_user_score(competition: CompetitionInfo, user_id, db_cursor) -> dict:
@@ -143,14 +205,16 @@ def get_user_score(competition: CompetitionInfo, user_id, db_cursor) -> dict:
     return scores
 
 
-def select_competition_winners(competition: CompetitionInfo,
-                               leaderboard: List[dict]) -> List[dict]:
+def select_competition_winners(
+        competition: CompetitionInfo,
+        leaderboard: typing.List[dict]
+) -> typing.List[dict]:
     winner_threshold = competition.winner_threshold
     return leaderboard[:winner_threshold]
 
 
 def assign_competition_winners(
-        winners: List[dict],
+        winners: typing.List[dict],
         competition_id: int,
         db_cursor
 ):
@@ -187,58 +251,12 @@ def get_prize_names(competition_id: int, user_rank: int, db_cursor):
     return [record[0] for record in db_cursor.fetchall()]
 
 
-def consolidate_leaderboards(
-        leaderboards: List[LeaderBoardInfo]
-) -> List[dict]:
-    """Return a sorted list with consolidated leaderboards
-
-    A user's leaderboards are consolidated into a single one by averaging the
-    points gotten in each leaderboard.
-
-    The final leaderboard is sorted in reverse order according to the final
-    score of each user. This means that the winner shall be the first in the
-    list.
-
-    """
-
-    participants = get_unique_participants([b[1] for b in leaderboards])
-    null_competitor = CompetitorInfo(
-        points=0, user_id=None, absolute_score=0)
-    final_leaderboard = {}
-    for participant, board_info in product(participants, leaderboards):
-        criterium, board = board_info
-        final_leaderboard.setdefault(participant, {"points": 0, "boards": {}})
-        board_points = board.get(participant, null_competitor).points
-        board_score = board.get(participant, null_competitor).absolute_score
-        final_leaderboard[participant]["points"] += board_points
-        final_leaderboard[participant]["boards"][criterium.name] = board_score
-    score_divisor = sum(len(board) for board in leaderboards)
-    total = []
-    for user_id, data in final_leaderboard.items():
-        total.append(
-            {
-                "user": user_id,
-                "points": data["points"] / score_divisor,
-                "criteria_points": data["boards"]
-            }
-        )
-    return sorted(total, key=lambda i: i["points"], reverse=True)
-
-
-def get_unique_participants(leaderboards: List[dict]) -> List[str]:
-    all_participants = set()
-    for board in leaderboards:
-        for user_id in board.keys():
-            all_participants.add(user_id)
-    return list(all_participants)
-
-
 def get_emissions_ranking(
         pollutant: str,
         competition: CompetitionInfo,
         winner_threshold: int,
         db_cursor
-) -> dict:
+) -> typing.List[CompetitorInfo]:
     if competition.region_of_interest is not None:
         query_path = "select-pollutant-savings-leaderboard-with-roi.sql"
     else:
@@ -252,10 +270,9 @@ def get_emissions_ranking(
             "threshold": winner_threshold,
         }
     )
-    leaderboard = {}
+    leaderboard = []
     for row in db_cursor.fetchall():
-        info = CompetitorInfo(*row)
-        leaderboard[info.user_id] = info
+        leaderboard.append(CompetitorInfo(*row))
     else:
         if len(leaderboard) == 0:
             logger.debug("Leaderboard is empty")
