@@ -14,8 +14,7 @@ import json
 import logging
 import os
 import re
-from typing import List
-from typing import Tuple
+import typing
 
 from pyfcm import FCMNotification
 
@@ -151,7 +150,7 @@ def get_new_track_info(db_cursor, bucket_name, object_key, **kwargs):
 
 
 def ingest_track(db_cursor, bucket_name, object_key, owner_uuid,
-                 notify_completion=True, **kwargs) -> Tuple[int, bool]:
+                 notify_completion=True, **kwargs) -> typing.Tuple[int, bool]:
     try:
 
         raw_data = processor.get_data_from_s3(bucket_name, object_key)
@@ -296,7 +295,7 @@ def get_user_active_devices(db_cursor, user_uuid):
     return [row[0] for row in db_cursor.fetchall()]
 
 
-def _flatten_validation_errors(errors: List[List[dict]]):
+def _flatten_validation_errors(errors: typing.List[typing.List[typing.Dict]]):
     flattened_errors = ""
     for segment_errors in errors:
         for error in segment_errors:
@@ -318,13 +317,22 @@ def _setup_logging():
         logging.getLogger(log_name).propagate = False
 
 
-def _notify_competition_winners(competition_results, db_cursor):
+def _notify_competition_winners(
+        competition_results: typing.List[
+            typing.Tuple[
+                calculateprizes.CompetitionInfo,
+                typing.List[typing.Dict]
+            ]
+        ],
+        db_cursor
+):
     for competition_info, winners in competition_results:
-        for winner in winners:
+        for index, winner in enumerate(winners):
+            competition_rank = index + 1
             user_id = winner["user"]
             user_uuid = utils.get_user_uuid(user_id, db_cursor)
             prize_names = calculateprizes.get_prize_names(
-                competition_info.id, winner["rank"], db_cursor)
+                competition_info.id, competition_rank, db_cursor)
             devices = get_user_active_devices(db_cursor, user_uuid)
             for prize_name in prize_names:
                 _send_notification(
