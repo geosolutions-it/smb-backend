@@ -341,5 +341,8 @@ def _notify_competition_winners(
                         "prize_name": prize_name
                     },
                     use_fcm=True,
-                    fcm_devices=devices
+                    fcm_devices={
+                        user_uuid: get_user_active_devices(
+                            db_cursor, user_uuid)
+                    }
                 )
