@@ -12,6 +12,26 @@
    (The `--editable` flag is optional, but very useful in development)
    
 
+## GDAL dependencies
+Providing GDAL requires packaging the dependencies GDAL binaries and deps + Python bindings
+
+The repository is shipped with a pre-packaged wheel (GDAL-2.4.0-cp36-cp36m-manylinux1_x86_64.whl) ready to be installed witht he following command:
+
+
+   ```
+   pip install GDAL-2.4.0-cp36-cp36m-manylinux1_x86_64.whl
+   ```
+
+The wheel has been built from https://github.com/youngpm/gdalmanylinux running the following commands:
+
+   ```
+   git clone https://github.com/youngpm/gdalmanylinux
+   cd gdalmanylinux
+   make wheel
+   ```
+The command will generete a set of wheels - one for each supported Python version - under gdalmanylinux/wheels directory.
+
+
 ## AWS lambdas deployment
 
 In a nutshell, run:
